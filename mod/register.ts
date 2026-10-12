@@ -6,8 +6,6 @@ const RUN = { plugin: 'review-kit', key: 'run' } as const
 const MARKS = { plugin: 'review-kit', key: 'marks' } as const
 const PUBLISH_MARKS = { plugin: 'review-kit', key: 'publishMarks' } as const
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
-const USAGE = { plugin: 'review-kit', key: 'usage' } as const
-const USAGE_DRAIN = { plugin: 'review-kit', key: 'usageDrain' } as const
 const CONFIRM_TEXT_LIMIT = 6000
 const TOOL_TIMEOUT_MS = 120_000
 const LIST_TIMEOUT_MS = 5 * 60 * 1000
@@ -27,7 +25,6 @@ const SCENARIO_TEXT = {
   'wait-author': 'Ждём автора: после вашего ревью нет ни новых коммитов, ни ответов в ваших тредах.',
 } as const
 const SCENARIO_LABEL = { feedback: 'замечания', review: 'ревью', recheck: 'перепроверка' } as const
-const MODES = { 'Агенты (A/B → C)': 'agents', 'Ядро review-lite': 'lite' } as const
 const GUARD_FAILED = 'review-kit: guard failed — действие отклонено'
 const STATUS_ARGV = ['git', 'status', '--porcelain', '-uno', '--ignore-submodules=all']
 const SUBMIT_ATTEMPTS = 5
@@ -107,7 +104,6 @@ async function runDir($: EngineInterface, pr: number): Promise<string> {
 }
 
 async function openRun($: EngineInterface, { pr, context, head, scenario }: { pr: number; context: PrContext; head: string; scenario: RunScenario }): Promise<void> {
-  await flushDrained($)
   await $.fs.write(`${await runDir($, pr)}/session.json`, JSON.stringify({ sessionId: await $.session.id(), status: 'active' }))
   await $.state.set(RUN, { pr, status: 'active', isOwn: context.isOwn, state: context.state, head, scenario })
 }
@@ -185,64 +181,12 @@ function publishKey(pr: number, action: PublishMark['action']): string {
   return action === 'publish-replies' ? `${pr}:replies` : String(pr)
 }
 
-async function finishRun($: EngineInterface, pr: number, status: 'done' | 'aborted', { drain }: { drain: boolean } = { drain: false }): Promise<void> {
+async function finishRun($: EngineInterface, pr: number, status: 'done' | 'aborted'): Promise<void> {
   plannotatorChildren.get(pr)?.stop()
   await $.state.set(RUN, { pr, status, isOwn: false, state: 'closed', head: '' })
   await update($, MARKS, marks => withoutPr(marks ?? {}, pr))
   await update($, PUBLISH_MARKS, marks => withoutPr(marks ?? {}, pr))
-  if (drain) await $.state.set(USAGE_DRAIN, pr)
-  else $.ui.log(await flushSafely($, pr))
   await deleteRunDir($, pr)
-}
-
-async function drainedPr($: EngineInterface): Promise<number | undefined> {
-  const value = (await $.state.get(USAGE_DRAIN)).value as number | null | undefined
-  return typeof value === 'number' ? value : undefined
-}
-
-async function flushDrained($: EngineInterface): Promise<void> {
-  const pr = await drainedPr($)
-  if (pr === undefined) return
-  await $.state.set(USAGE_DRAIN, null)
-  $.ui.log(await flushSafely($, pr))
-}
-
-interface UsageRow {
-  at: string
-  pr: number
-  session: string
-  agentId: string | null
-  turnId: string
-  index: number
-  model: string
-  input: number
-  output: number
-  cacheRead: number
-  cacheCreation: number
-}
-
-function usageLine(pr: number, rows: UsageRow[]): string {
-  const main = rows.filter(row => row.agentId === null).length
-  const sum = (key: 'input' | 'output' | 'cacheRead') => rows.reduce((total, row) => total + row[key], 0)
-  return `Расход прогона PR ${pr}: ${main} шагов сессии, ${rows.length - main} шагов агентов, вход ${sum('input')} / выход ${sum('output')} / кэш-чтение ${sum('cacheRead')}`
-}
-
-async function flushUsage($: EngineInterface, pr: number): Promise<string> {
-  const taken: UsageRow[] = []
-  await update($, USAGE, all => {
-    taken.splice(0, taken.length, ...((all ?? {})[pr] ?? []))
-    return Object.fromEntries(Object.entries(all ?? {}).filter(([key]) => Number(key) !== pr))
-  })
-  if (taken.length > 0) {
-    const path = `${await projectRoot($)}/.review-kit/usage.jsonl`
-    const before = await $.fs.read(path).then(String, () => '')
-    await $.fs.write(path, `${before}${taken.map(row => JSON.stringify(row)).join('\n')}\n`)
-  }
-  return usageLine(pr, taken)
-}
-
-function flushSafely($: EngineInterface, pr: number): Promise<string> {
-  return flushUsage($, pr).catch(error => `review-kit: расход не выгружен: ${String(error)}`)
 }
 
 async function readGatedAgent($: EngineInterface, agentId: string | undefined): Promise<GatedAgent | undefined> {
@@ -501,10 +445,8 @@ async function startRun($: EngineInterface, pr: number, { context, handoff, scen
   const tools = `${$.plugin.root}/tools`
 
   const reviewing = scenario === 'review' || scenario === 'recheck'
-  const model = await $.ui.ask(`Модель для ${reviewing ? 'ревью' : 'разбора замечаний'} PR ${pr}?`, ['opus', 'sonnet', 'haiku'])
-  const choice = await $.ui.ask(reviewing ? `Как ревьюим PR ${pr}?` : `Как разбираем PR ${pr}?`, Object.keys(MODES)).catch(() => undefined)
-  const mode = choice === undefined ? undefined : MODES[choice as keyof typeof MODES]
-  if (!mode) return 'Отменено: дерево не тронуто.'
+  const model = await $.ui.ask(`Модель для ${reviewing ? 'ревью' : 'разбора замечаний'} PR ${pr}?`, ['opus', 'sonnet', 'haiku']).catch(() => undefined)
+  if (!model) return 'Отменено: дерево не тронуто.'
 
   const dirty = (await $.process.run(STATUS_ARGV)).stdout.trim()
   const saved = dirty ? await stashOrCancel($, pr) : null
@@ -514,16 +456,16 @@ async function startRun($: EngineInterface, pr: number, { context, handoff, scen
   const switched = await switchOrRestore($, { tools, pr, context, stash: saved })
   const dir = `${root}/.review-kit/run/${pr}`
   if (scenario === 'feedback' || scenario === 'fix') await runTool($, ['python3', `${tools}/intake.py`, String(pr), '--out', dir])
-  await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, model, mode, scenario }))
+  await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, model, scenario }))
   await openRun($, { pr, context, head: switched.head, scenario })
   const next = handOff($, pr, handoff, scenario)
 
   if (scenario === 'feedback' || scenario === 'fix') {
-    return `PR ${pr} (свой, ${scenario === 'feedback' ? 'замечания' : 'правки'}): дерево на ${context.headRef}${stash ? `, stash «${stash}»` : ''}, модель ${model}, режим ${mode === 'agents' ? 'агенты' : 'сам'}. Прогон открыт до конца раунда; закрыть вручную — /pr-${scenario} stop.${next}`
+    return `PR ${pr} (свой, ${scenario === 'feedback' ? 'замечания' : 'правки'}): дерево на ${context.headRef}${stash ? `, stash «${stash}»` : ''}, модель ${model}. Прогон открыт до конца раунда; закрыть вручную — /pr-${scenario} stop.${next}`
   }
 
   const who = context.isOwn ? 'свой — только отчёт' : context.state === 'closed' ? 'закрыт — только отчёт' : context.author
-  return `PR ${pr} (${who}): дерево на ${switched.detached ? 'коммите PR' : context.headRef}${stash ? `, stash «${stash}»` : ''}, модель ${model}, режим ${mode === 'agents' ? 'агенты' : 'review-lite'}${switched.baseFallback ? `, база ревью — от main: ветка ${context.baseRef} на сервере удалена` : ''}. Прогон открыт до конца ревью; закрыть вручную — /pr-review stop.${next}`
+  return `PR ${pr} (${who}): дерево на ${switched.detached ? 'коммите PR' : context.headRef}${stash ? `, stash «${stash}»` : ''}, модель ${model}${switched.baseFallback ? `, база ревью — от main: ветка ${context.baseRef} на сервере удалена` : ''}. Прогон открыт до конца ревью; закрыть вручную — /pr-review stop.${next}`
 }
 
 function sessionProject(root: string): string {
@@ -860,8 +802,8 @@ export const register: Register = on => {
     const { pr } = e as unknown as { pr: number }
     if ((await activeRun($)) !== pr) return { result: `not finished: нет активного прогона PR ${pr}` }
 
-    await finishRun($, pr, 'done', { drain: true })
-    return { result: await withCleanup($, 'finished (расход прогона — в конце хода)', CLEANUP_MIN_BRANCHES_AFTER_RUN) }
+    await finishRun($, pr, 'done')
+    return { result: await withCleanup($, 'finished', CLEANUP_MIN_BRANCHES_AFTER_RUN) }
   })
 
   on('tool.call', { tool: 'mcp__review-kit__review_plannotator' }, async ($, e) => {
@@ -997,29 +939,5 @@ export const register: Register = on => {
       await gateLog($, gated, e.agent_id, { role: gated.role, event: 'stopped', unread: unreadFiles((await manifestOf($, gated)) ?? [], gated.read) })
     }
     return next(e)
-  }).catch(($, e, next) => next(e))
-
-  on('turn.step', async function* ($, e, next) {
-    const result = yield* next(e)
-    try {
-      const pr = (await activeRun($)) ?? (await drainedPr($))
-      if (pr !== undefined && result.usage) {
-        const { model, input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens } = result.usage
-        const row: UsageRow = {
-          at: new Date().toISOString(), pr, session: await $.session.id(), agentId: e.agentId ?? null, turnId: e.turnId, index: e.index, model,
-          input: input_tokens, output: output_tokens, cacheRead: cache_read_input_tokens, cacheCreation: cache_creation_input_tokens,
-        }
-        await update($, USAGE, rows => ({ ...(rows ?? {}), [pr]: [...(rows?.[pr] ?? []), row] }))
-      }
-    } catch (error) {
-      $.ui.log(`review-kit: учёт расхода не записан: ${String(error)}`)
-    }
-    return result
-  })
-
-  on('turn.complete', async ($, e, next) => {
-    const result = await next(e)
-    if (e.agentId === undefined) await flushDrained($)
-    return result
   }).catch(($, e, next) => next(e))
 }

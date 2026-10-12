@@ -96,7 +96,7 @@ def main() -> None:
         return
 
     doc = json.load(open(args.findings, encoding='utf-8'))
-    findings = [*doc['findings'], *doc.get('simplify', [])]
+    findings = doc['findings']
     texts = json.load(open(args.texts, encoding='utf-8'))
     by_id = {item['id']: item for item in findings}
     ids = list(by_id) if args.ids == 'all' else [part for part in args.ids.split(',') if part]

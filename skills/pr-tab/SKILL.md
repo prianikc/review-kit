@@ -14,9 +14,9 @@ stack skills and the project's memory linked in — and a tab where `/pr-review 
 For each number the user named, in their order:
 
 1. Run exactly:
-   `python3 .claude/skills/review-kit/tools/forgejo.py get /pulls/<N> | python3 -c 'import json,sys; p=json.load(sys.stdin); print(p["state"], p["merged"], p["head"]["ref"], p["head"]["sha"])'`
+   `python3 ${CLAUDE_PLUGIN_ROOT}/tools/forgejo.py get /pulls/<N> | python3 -c 'import json,sys; p=json.load(sys.stdin); print(p["state"], p["merged"], p["head"]["ref"], p["head"]["sha"])'`
    Not `open`, or merged `True` → «PR <N> закрыт — вкладку не открываю», next number.
-2. Run exactly: `bash .claude/skills/review-kit/tools/open-pr-tab --number <N> --head-ref <ref> --head-sha <sha>`
+2. Run exactly: `bash ${CLAUDE_PLUGIN_ROOT}/tools/open-pr-tab --number <N> --head-ref <ref> --head-sha <sha>`
 3. Exit 0 → tab opened (`created: false` — the worktree existed). Exit 8 → the worktree is ready but no tab (no Orca,
    or it refused): print `cd "<worktree>" && claude --permission-mode auto "/pr-review <N>"` for the user to run in a
    terminal of their own. Any other exit → show the stderr line. Lines `слой: нет …`, `битая ссылка: …`,

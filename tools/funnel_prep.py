@@ -3,7 +3,6 @@ import argparse, fnmatch, glob, json, os, sys
 from forgejo import ForgejoError, kit_config
 from review_lite_input import InputError, build_input, changed_files
 
-PROMPT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'skills', 'review-lite', 'prompt.md'))
 FLOOR = ('AGENTS.md',)
 FINDERS = ('correctness', 'quality')
 CONFIG_UNAVAILABLE = 'stack: конфиг review-kit недоступен'
@@ -30,7 +29,7 @@ def manifest(role: str, repo: str, skills: list[str], note: str | None) -> list[
     present = [p for p in wanted if os.path.isfile(os.path.join(repo, p))]
     notes = [note] if note else [] if skills else ['stack: изменённые пути не подходят ни под один стек']
     notes += [f'нет файла {p}' for p in wanted if p not in present]
-    paths = [os.path.join(repo, p) for p in present] + ([PROMPT] if role in FINDERS else [])
+    paths = [os.path.join(repo, p) for p in present]
     return [*sorted(set(paths)), *(f'# {n}' for n in notes)]
 
 

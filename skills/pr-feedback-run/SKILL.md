@@ -5,22 +5,21 @@ description: Use when the review-kit mod or review_start opened a feedback run f
 
 # pr-feedback-run
 
-Read `.review-kit/run/<N>/context.json` (`head`, `base`, `model`, `mode`, `scenario`) and `.review-kit/run/<N>/intake.json`.
+Read `.review-kit/run/<N>/context.json` (`head`, `base`, `model`, `scenario`) and `.review-kit/run/<N>/intake.json`.
 No `context.json` → tell the user to run `/pr-feedback <N>` and stop. Empty `items` → «Замечаний нет», call `review_finish`, stop.
 
 ## 1. Triage
 
-`mode: "agents"`:
 1. Run exactly:
-   `python3 .claude/skills/review-kit/tools/triage_prep.py --pr <N> --mode feedback --items .review-kit/run/<N>/intake.json --base <base> --head <head> --model <model> --out .review-kit/run/<N>/triage`
-2. Call `Workflow` with `scriptPath: ".claude/skills/review-kit/funnel/triage.js"` and `args` = the JSON the script printed, passed as an object.
+   `python3 ${CLAUDE_PLUGIN_ROOT}/tools/triage_prep.py --pr <N> --mode feedback --items .review-kit/run/<N>/intake.json --base <base> --head <head> --model <model> --out .review-kit/run/<N>/triage`
+2. Call `Workflow` with `scriptPath: "${CLAUDE_PLUGIN_ROOT}/funnel/triage.js"` and `args` = the JSON the script printed, passed as an object.
    This instruction is the user's opt-in to the workflow. Wait for its completion notification; do nothing else meanwhile.
 3. Run exactly: `cp <output-file> .review-kit/run/<N>/triage/raw.json`, then
-   `python3 .claude/skills/review-kit/tools/triage_finish.py --raw .review-kit/run/<N>/triage/raw.json --items .review-kit/run/<N>/intake.json --mode feedback --out .review-kit/run/<N>`
+   `python3 ${CLAUDE_PLUGIN_ROOT}/tools/triage_finish.py --raw .review-kit/run/<N>/triage/raw.json --items .review-kit/run/<N>/intake.json --mode feedback --out .review-kit/run/<N>`
 4. Any step fails → say «Разбор агентом не состоялся» with the stderr line and triage yourself (below).
 
-`mode: "lite"` — triage yourself: for each item read the quoted place at `head` and write
-`.review-kit/run/<N>/triage.json` = `{"items": [{"id", "class", "reason", "fixed"?}]}` with the classes and rules of `agents/triage.md`
+Triage yourself (only after step 4): for each item read the quoted place at `head` and write
+`.review-kit/run/<N>/triage.json` = `{"items": [{"id", "class", "reason", "fixed"?}]}` with the classes and rules of `${CLAUDE_PLUGIN_ROOT}/agents/triage.md`
 (valid / invalid / question / out-of-scope; a `stale` item already changed as asked is `valid` with `"fixed": true` and a reason saying where).
 
 ## 2. Summary

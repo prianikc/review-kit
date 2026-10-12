@@ -176,7 +176,7 @@ def main() -> None:
         os.makedirs(args.out, exist_ok=True)
         if args.cmd == 'annotations':
             doc = json.load(open(args.findings, encoding='utf-8'))
-            findings = [*doc['findings'], *doc.get('simplify', [])]
+            findings = doc['findings']
             body = annotations(findings, texts)
             write_json(os.path.join(args.out, 'items.json'), findings)
             json.dump(body, sys.stdout, ensure_ascii=False)
