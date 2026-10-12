@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+out="${1:-}"
+[ -n "$out" ] || { echo "pack: нужен каталог для архива: pack <каталог>" >&2; exit 64; }
+version="$(cat "$root/VERSION")"
+
+python3 -m unittest discover -s "$root/tools/tests" >/dev/null 2>&1 || { echo "pack: Python-тесты красные — архива нет" >&2; exit 1; }
+claude plugin test "$root" >/dev/null 2>&1 || { echo "pack: тесты мода красные — архива нет" >&2; exit 1; }
+node --test "$root"/funnel/*.test.mjs >/dev/null 2>&1 || { echo "pack: тесты Workflow красные — архива нет" >&2; exit 1; }
+bash "$root/tools/switch-pr.test.sh" >/dev/null 2>&1 || { echo "pack: switch-pr.test.sh красный — архива нет" >&2; exit 1; }
+bash "$root/tools/commit-push.test.sh" >/dev/null 2>&1 || { echo "pack: commit-push.test.sh красный — архива нет" >&2; exit 1; }
+bash "$root/tools/open-pr-tab.test.sh" >/dev/null 2>&1 || { echo "pack: open-pr-tab.test.sh красный — архива нет" >&2; exit 1; }
+
+mkdir -p "$out"
+archive="$(cd "$out" && pwd)/review-kit-$version.zip"
+python3 - "$root" "$archive" <<'PY'
+import os, sys, zipfile
+root, archive = sys.argv[1:]
+INCLUDE = ('.claude-plugin', 'INSTALL.md', 'VERSION', 'mod', 'skills', 'agents', 'funnel', 'tools', 'config', 'rules', 'types', 'hooks')
+SKIP_DIRS = {'tests', '__pycache__', 'node_modules'}
+SKIP_SUFFIX = ('.test.ts', '.test.mjs', '.test.sh', '.pyc', '.zip')
+count = 0
+with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as zf:
+    for top in INCLUDE:
+        path = os.path.join(root, top)
+        if os.path.isfile(path):
+            zf.write(path, f'review-kit/{top}'); count += 1
+            continue
+        for current, dirs, files in os.walk(path):
+            dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+            for name in sorted(files):
+                if name.endswith(SKIP_SUFFIX):
+                    continue
+                full = os.path.join(current, name)
+                info = zipfile.ZipInfo.from_file(full, f'review-kit/{os.path.relpath(full, root)}')
+                with open(full, 'rb') as source:
+                    zf.writestr(info, source.read(), zipfile.ZIP_DEFLATED)
+                count += 1
+print(f'{archive} — файлов: {count}')
+PY

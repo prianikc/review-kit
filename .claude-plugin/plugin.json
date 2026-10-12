@@ -1,0 +1,6 @@
+{
+  "name": "review-kit",
+  "version": "2.1.3",
+  "description": "review-kit 2.0: ревью PR в текущей вкладке, воронка агентов, гейт чтения, подтверждения",
+  "types": "./types/index.d.ts"
+}

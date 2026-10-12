@@ -1,0 +1,5 @@
+{
+  "name": "review-kit-local",
+  "owner": { "name": "artamonov_anton" },
+  "plugins": [{ "name": "review-kit", "source": "./" }]
+}

@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+orca="${ORCA_BIN:-orca.exe}"
+claude_cmd="${REVIEW_KIT_CLAUDE:-claude --permission-mode auto}"
+claude_home="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+DEFAULT_LAYER='[".claude/skills", ".agents/skills", ".claude/review-kit.local.json", ".claude/review-kit.installed.json", ".claude/settings.local.json", "CLAUDE.local.md", ".claude/**/*.local.*"]'
+
+project_key() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
+
+number=""; head_ref=""; head_sha=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --number) number="${2:-}"; shift 2 ;;
+    --head-ref) head_ref="${2:-}"; shift 2 ;;
+    --head-sha) head_sha="${2:-}"; shift 2 ;;
+    *) echo "open-pr-tab: неизвестный аргумент $1" >&2; exit 64 ;;
+  esac
+done
+[[ "$number" =~ ^[0-9]+$ ]] && [ -n "$head_ref" ] && [ -n "$head_sha" ] || { echo "open-pr-tab: нужны --number <число>, --head-ref, --head-sha" >&2; exit 64; }
+
+root=$(git worktree list --porcelain | awk 'NR==1{print $2}')
+cd "$root"
+wt="$root/.claude/worktrees/pr-$number-${head_ref//\//-}"
+
+git fetch -q origin "+refs/heads/$head_ref:refs/remotes/origin/$head_ref" || { echo "open-pr-tab: не удалось получить origin/$head_ref" >&2; exit 9; }
+[ "$(git rev-parse "origin/$head_ref")" = "$head_sha" ] || { echo "open-pr-tab: origin/$head_ref не совпал с головой PR $head_sha" >&2; exit 11; }
+
+created=false
+if ! git -C "$wt" rev-parse --git-dir >/dev/null 2>&1; then
+  git worktree add -q --detach "$wt" "origin/$head_ref"
+  created=true
+fi
+
+layer=$(python3 - "$DEFAULT_LAYER" <<'PY'
+import glob, json, os, sys
+config = json.load(open('.claude/review-kit.local.json')) if os.path.isfile('.claude/review-kit.local.json') else {}
+for pattern in config.get('tabLayer') or json.loads(sys.argv[1]):
+    found = [p for p in glob.glob(pattern, recursive=True) if not p.startswith('.claude/worktrees')]
+    if not found:
+        print(f'open-pr-tab: слой: нет {pattern}', file=sys.stderr)
+    for path in found:
+        print(path)
+PY
+)
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  mkdir -p "$wt/$(dirname "$path")"
+  cp -a "$path" "$wt/$(dirname "$path")/"
+done <<<"$layer"
+link_dirs=()
+for dir in .claude .agents; do [ -d "$wt/$dir" ] && link_dirs+=("$wt/$dir"); done
+[ ${#link_dirs[@]} -eq 0 ] || find "${link_dirs[@]}" -xtype l | sed 's/^/open-pr-tab: битая ссылка: /' >&2
+
+main_memory="$claude_home/projects/$(project_key "$root")/memory"
+wt_project="$claude_home/projects/$(project_key "$wt")"
+if [ -d "$main_memory" ]; then
+  mkdir -p "$wt_project"
+  [ -e "$wt_project/memory" ] || ln -s "$main_memory" "$wt_project/memory"
+else
+  echo "open-pr-tab: памяти нет: $main_memory" >&2
+fi
+
+git -C "$wt" submodule update --init -q || { echo "open-pr-tab: подмодули не обновлены в $wt" >&2; exit 10; }
+[ -z "$(git -C "$wt" status --porcelain --ignore-submodules=all)" ] || { echo "open-pr-tab: в worktree $wt изменены файлы" >&2; exit 6; }
+
+printf '{"worktree": "%s", "created": %s}\n' "$wt" "$created"
+"$orca" terminal create --worktree "path:$root" --title "review #$number" --focus --json \
+  --command "cd '$wt' && $claude_cmd \"/pr-review $number\"" >/dev/null 2>&1 || { echo "open-pr-tab: Orca не открыла вкладку" >&2; exit 8; }

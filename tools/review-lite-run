@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+core="$here/../skills/review-lite"
+claude_bin="${RL_CLAUDE:-claude}"
+
+repo="."; base=""; head=""; model=""; out=""; focus="all"; rules=("AGENTS.md"); rules_rev=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --rules-rev) rules_rev=(--rules-rev "$2"); shift 2 ;;
+    --repo) repo="$2"; shift 2 ;;
+    --base) base="$2"; shift 2 ;;
+    --head) head="$2"; shift 2 ;;
+    --model) model="$2"; shift 2 ;;
+    --out) out="$2"; shift 2 ;;
+    --focus) focus="$2"; shift 2 ;;
+    --rules) shift; rules=(); while [ $# -gt 0 ] && [[ "$1" != --* ]]; do rules+=("$1"); shift; done ;;
+    *) echo "review-lite-run: неизвестный аргумент $1" >&2; exit 64 ;;
+  esac
+done
+[ -n "$base" ] && [ -n "$head" ] && [ -n "$model" ] && [ -n "$out" ] && [ ${#rules[@]} -gt 0 ] \
+  || { echo "review-lite-run: нужны --base, --head, --model, --out и хотя бы один файл в --rules" >&2; exit 64; }
+
+repo="$(cd "$repo" && pwd)"
+mkdir -p "$out"; out="$(cd "$out" && pwd)"
+
+rm -f "$out/findings.json"
+python3 "$here/review_lite_input.py" --repo "$repo" --base "$base" --head "$head" --rules "${rules[@]}" ${rules_rev[@]+"${rules_rev[@]}"} --focus "$focus" > "$out/input.md"
+
+sandbox="$(mktemp -d)"
+trap 'rm -rf "$sandbox"' EXIT
+( cd "$sandbox" && "$claude_bin" -p --model "$model" --tools "" --setting-sources local --no-session-persistence \
+    --system-prompt "$(cat "$core/prompt.md")" --json-schema "$(cat "$core/findings.schema.json")" \
+    --output-format json < "$out/input.md" > "$out/raw.json" ) || true
+
+python3 - "$out" <<'PY'
+import json, sys
+out = sys.argv[1]
+try:
+    raw = json.load(open(f'{out}/raw.json', encoding='utf-8'))
+except (OSError, ValueError):
+    sys.stderr.write('review-lite-run: claude -p вернул не JSON\n'); sys.exit(3)
+if raw.get('is_error') or not isinstance(raw.get('structured_output'), dict):
+    sys.stderr.write(f"review-lite-run: модель не дала ответ по схеме: {raw.get('result', '')}\n"); sys.exit(3)
+json.dump(raw['structured_output'], open(f'{out}/answer.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+json.dump({'usage': raw.get('usage'), 'cost': raw.get('total_cost_usd')}, open(f'{out}/usage.json', 'w'), indent=2)
+PY
+
+python3 "$here/review_lite_check.py" --answer "$out/answer.json" --repo "$repo" --base "$base" --head "$head" --rules "${rules[@]}" ${rules_rev[@]+"${rules_rev[@]}"} > "$out/findings.json.tmp" \
+  || { code=$?; rm -f "$out/findings.json.tmp"; exit "$code"; }
+mv "$out/findings.json.tmp" "$out/findings.json"
