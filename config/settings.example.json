@@ -1,8 +1,0 @@
-{
-  "forgejo": { "host": "forgejo.example.org", "owner": "team", "repo": "project" },
-  "baseBranch": "main",
-  "stack": [
-    { "paths": ["apps/api/**", "libs/shared/**"], "skill": ".agents/skills/nestjs-best-practices/SKILL.md" },
-    { "paths": ["apps/web/**"], "skill": ".agents/skills/angular-best-practices/SKILL.md" }
-  ]
-}

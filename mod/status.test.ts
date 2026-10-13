@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { actionableRows, contextOf, intakeItems, loadPr, MARKER, priorComments, scenarioOf, type PrData } from './status.ts'
+import { ACTIONABLE, contextOf, pullRows, statusOf, intakeItems, loadPr, MARKER, priorComments, scenarioOf, type PrData } from './status.ts'
 import { fakeProvider } from './forge/fake.ts'
 import type { Comment, PullRequest, Review, Thread } from './forge/types.ts'
 
@@ -92,7 +92,7 @@ test('priorComments: тред прежнего ревью, где автор о�
 test('contextOf: поля для прогона', () => {
   assert.deepEqual(contextOf(own(), 'none-own'), {
     number: 5, title: 'T', author: 'Alice', isOwn: true, headRef: 'f', headSha: 'h2', baseRef: 'main',
-    state: 'open', merged: false, url: 'u', scenario: 'none-own',
+    state: 'open', merged: false, url: 'u', scenario: 'none-own', status: 'ждём ревью',
   })
 })
 
@@ -105,5 +105,36 @@ test('фейковый провайдер: четыре сценария без 
   })
   const scenarios = await Promise.all([1, 2, 3, 4].map(async n => scenarioOf(await loadPr(fake, n))))
   assert.deepEqual(scenarios, ['feedback', 'review', 'recheck', 'wait-author'])
-  assert.deepEqual((await actionableRows(fake)).map(r => [r.number, r.scenario]), [[1, 'feedback'], [2, 'review'], [3, 'recheck']])
+  assert.deepEqual((await pullRows(fake)).rows.filter(r => ACTIONABLE.includes(r.scenario)).map(r => [r.number, r.scenario]), [[1, 'feedback'], [2, 'review'], [3, 'recheck']])
+})
+
+test('statusOf: по таблице спеки', () => {
+  const approved = review('r5', 'carol', 'approved', 'h2', '2026-10-03T10:00:00Z')
+  assert.equal(statusOf(data({ pull: pull({ state: 'closed', merged: true }) }), 'closed'), 'влит')
+  assert.equal(statusOf(data({ pull: pull({ state: 'closed' }) }), 'closed'), 'закрыт')
+  assert.equal(statusOf(own(), 'feedback'), 'есть замечания')
+  assert.equal(statusOf(data(), 'review'), 'на проверке')
+  assert.equal(statusOf(data(), 'recheck'), 'перепроверка')
+  assert.equal(statusOf(own({ reviews: [approved] }), 'none-own'), 'готов к слиянию')
+  assert.equal(statusOf(own(), 'none-own'), 'ждём ревью')
+  assert.equal(statusOf(data({ reviews: [review('r1', 'alice', 'comment', 'h2')] }), 'wait-author'), 'ждём автора')
+})
+
+test('готов к слиянию: не при активном request changes и не при открытом треде; снятое ревью не мешает', () => {
+  const approved = review('r5', 'carol', 'approved', 'h2', '2026-10-03T10:00:00Z')
+  const changes = review('r6', 'dave', 'changes', 'h2', '2026-10-03T11:00:00Z')
+  assert.equal(statusOf(own({ reviews: [approved, changes] }), 'none-own'), 'ждём ревью')
+  assert.equal(statusOf(own({ reviews: [approved, { ...changes, dismissed: true }] }), 'none-own'), 'готов к слиянию')
+  const open = thread([comment('c1', 'carol', 'x', '2026-10-01T10:00:00Z'), comment('c2', 'alice', 'ок', '2026-10-01T11:00:00Z')])
+  assert.equal(statusOf(own({ reviews: [approved], threads: [open] }), 'none-own'), 'ждём ревью')
+})
+
+test('pullRows: все открытые, с делом — первыми; ровно 50 — truncated', async () => {
+  const pulls = [pull({ number: 1 }), pull({ number: 2, author: 'alice' }), pull({ number: 3 })]
+  const fake = fakeProvider({ me: 'alice', pulls, reviews: { 3: [review('r3', 'alice', 'comment', 'h2')] } })
+  const { rows, truncated } = await pullRows(fake)
+  assert.deepEqual(rows.map(r => [r.number, r.status]), [[1, 'на проверке'], [2, 'ждём ревью'], [3, 'ждём автора']])
+  assert.equal(truncated, false)
+  const many = fakeProvider({ me: 'alice', pulls: Array.from({ length: 50 }, (_, i) => pull({ number: i + 1 })) })
+  assert.equal((await pullRows(many)).truncated, true)
 })
