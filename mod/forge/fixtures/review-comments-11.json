@@ -1,0 +1,5 @@
+[
+  { "id": 101, "user": { "login": "Bob" }, "body": "Поправил", "created_at": "2026-10-01T12:00:00Z", "path": "src/a.ts", "position": 5, "commit_id": "aaa000", "pull_request_review_id": 11, "resolver": null },
+  { "id": 100, "user": { "login": "alice" }, "body": "Тут null", "created_at": "2026-10-01T10:00:00Z", "path": "src/a.ts", "position": 5, "commit_id": "aaa000", "pull_request_review_id": 11, "resolver": null },
+  { "id": 102, "user": { "login": "alice" }, "body": "Имя", "created_at": "2026-10-01T10:01:00Z", "path": "src/b.ts", "position": 9, "commit_id": "aaa000", "pull_request_review_id": 11, "resolver": { "login": "Bob" } }
+]
