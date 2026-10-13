@@ -16,12 +16,9 @@ your manifest, and the PR number.
      a file marked `(не приложен: …)` was not attached.
 3. Report only problems the diff introduces or touches: logic errors, unhandled edge cases and error paths,
    data integrity, security, broken contracts between layers or modules, new branching logic without a test.
-   You may Read and Grep source code of the repository to confirm a failure scenario. Rules, skills, docs and
-   memory are opened with Read, whole — grep over them is refused.
+   You may Read and Grep source code of the repository to confirm a failure scenario.
 4. Every finding carries `failureScenario` — a concrete input or state and the wrong result it leads to.
-   Without it the finding is invalid. Add `rule` only when a rule also applies: `file` is a RULES path exactly
-   as written in its header (or a project rule file loaded into your context — `CLAUDE.md`, `AGENTS.md`,
-   `.claude/rules/…` — as a path from the repository root), `quote` is copied verbatim from that file, at least
+   Without it the finding is invalid. Add `rule` only when a rule also applies: `file` is a RULES path exactly as written in its `=== RULE FILE: <path> ===` header, `quote` is copied verbatim from that file, at least
    6 words and 30 characters, in the file's own language, never translated.
 5. `file` is the path from the repository root as in the DIFF. `line` is the line number in the changed file
    itself at the PR head: open that file with Read and take the number from that Read. The numbers Read shows

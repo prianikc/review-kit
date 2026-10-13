@@ -1,6 +1,10 @@
 {
   "name": "review-kit",
-  "version": "2.1.3",
-  "description": "review-kit 2.0: ревью PR в текущей вкладке, воронка агентов, гейт чтения, подтверждения",
-  "types": "./types/index.d.ts"
+  "version": "3.0.0",
+  "description": "Ревью PR воронкой агентов, разбор замечаний к своему PR, раунд правок и перепроверка — в текущей вкладке",
+  "author": { "name": "prianikc" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "forgejo": { "type": "boolean", "title": "Forgejo/Gitea", "description": "Работать с PR в репозиториях на Forgejo и Gitea (токен — переменная FORGEJO_TOKEN или GITEA_TOKEN)", "default": true }
+  }
 }

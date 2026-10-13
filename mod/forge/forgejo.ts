@@ -139,7 +139,7 @@ function createForgejo(deps: ProviderDeps): ForgeProvider {
       for (const [index, { reply, thread }] of targets.entries()) {
         try {
           if (thread) await call('POST', `${repoPath}/pulls/${number}/reviews/${thread.reviewId}/comments`, { path: thread.path, new_position: thread.line, body: reply.body })
-          else await call('POST', `${repoPath}/issues/${number}/comments`, { body: `> ${reply.quote ?? ''}\n\n${reply.body}` })
+          else await call('POST', `${repoPath}/issues/${number}/comments`, { body: reply.quote ? `> ${reply.quote}\n\n${reply.body}` : reply.body })
         } catch (error) {
           throw new Error(`${(error as Error).message}; уже отправлено ${index} из ${replies.length}`)
         }

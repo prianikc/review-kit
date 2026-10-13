@@ -49,6 +49,7 @@ export interface PrContext {
   merged: boolean
   url: string
   scenario: Scenario
+  status: Status
 }
 
 export interface ListRow {
@@ -57,6 +58,7 @@ export interface ListRow {
   author: string
   isOwn: boolean
   scenario: Scenario
+  status: Status
 }
 
 function same(a: string, b: string): boolean {
@@ -154,16 +156,42 @@ export function contextOf(data: PrData, scenario: Scenario): PrContext {
   const { pull } = data
   return {
     number: pull.number, title: pull.title, author: pull.author, isOwn: same(pull.author, data.me), headRef: pull.headRef, headSha: pull.headSha,
-    baseRef: pull.baseRef, state: pull.state, merged: pull.merged, url: pull.url, scenario,
+    baseRef: pull.baseRef, state: pull.state, merged: pull.merged, url: pull.url, scenario, status: statusOf(data, scenario),
   }
 }
 
-export async function actionableRows(provider: ForgeProvider): Promise<ListRow[]> {
+export type Status = 'влит' | 'закрыт' | 'есть замечания' | 'на проверке' | 'перепроверка' | 'готов к слиянию' | 'ждём автора' | 'ждём ревью'
+const PULL_LIMIT = 50
+const PULL_CONCURRENCY = 4
+
+function readyToMerge(data: PrData): boolean {
+  const { reviews, threads } = live(data)
+  const latest = new Map<string, Review>()
+  for (const review of [...reviews].sort((a, b) => Date.parse(a.submittedAt) - Date.parse(b.submittedAt))) latest.set(review.author.toLowerCase(), review)
+  const active = [...latest.values()].filter(review => !review.dismissed)
+  return active.some(review => review.state === 'approved') && !active.some(review => review.state === 'changes') && threads.every(thread => thread.resolved)
+}
+
+export function statusOf(data: PrData, scenario: Scenario): Status {
+  if (scenario === 'closed') return data.pull.merged ? 'влит' : 'закрыт'
+  if (scenario === 'feedback') return 'есть замечания'
+  if (scenario === 'review') return 'на проверке'
+  if (scenario === 'recheck') return 'перепроверка'
+  if (readyToMerge(data)) return 'готов к слиянию'
+  return scenario === 'wait-author' ? 'ждём автора' : 'ждём ревью'
+}
+
+export async function pullRows(provider: ForgeProvider): Promise<{ rows: ListRow[]; truncated: boolean }> {
+  const pulls = await provider.listPulls('open')
   const rows: ListRow[] = []
-  for (const pull of await provider.listPulls('open')) {
-    const data = await loadPr(provider, pull.number, pull)
-    const scenario = scenarioOf(data)
-    if (ACTIONABLE.includes(scenario)) rows.push({ number: pull.number, title: pull.title, author: pull.author, isOwn: same(pull.author, data.me), scenario })
+  for (let at = 0; at < pulls.length; at += PULL_CONCURRENCY) {
+    const batch = await Promise.all(pulls.slice(at, at + PULL_CONCURRENCY).map(async pull => {
+      const data = await loadPr(provider, pull.number, pull)
+      const scenario = scenarioOf(data)
+      return { number: pull.number, title: pull.title, author: pull.author, isOwn: same(pull.author, data.me), scenario, status: statusOf(data, scenario) }
+    }))
+    rows.push(...batch)
   }
-  return rows.sort((a, b) => Number(b.isOwn) - Number(a.isOwn) || a.number - b.number)
+  const rank = (row: ListRow) => (ACTIONABLE.includes(row.scenario) ? 0 : 1)
+  return { rows: rows.sort((a, b) => rank(a) - rank(b) || Number(b.isOwn) - Number(a.isOwn) || a.number - b.number), truncated: pulls.length >= PULL_LIMIT }
 }

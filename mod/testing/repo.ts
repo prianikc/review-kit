@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Run } from '../git.ts'
 
-export function repo(): { dir: string; run: Run; git: (...args: string[]) => string; commit: (file: string, text: string, message: string) => string } {
+export function repo(): { dir: string; run: Run; git: (...args: string[]) => string; commit: (file: string, text: string, message: string) => string; origin: () => string } {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'rk-git-')))
   const run: Run = async (argv, init) => {
     const result = spawnSync(argv[0], argv.slice(1), { cwd: init?.cwd ?? dir, env: { ...process.env, ...init?.env }, input: init?.stdin, encoding: 'utf8' })
@@ -25,5 +25,11 @@ export function repo(): { dir: string; run: Run; git: (...args: string[]) => str
     git('commit', '-qm', message)
     return git('rev-parse', 'HEAD')
   }
-  return { dir, run, git, commit }
+  const origin = () => {
+    const bare = mkdtempSync(join(tmpdir(), 'rk-origin-'))
+    spawnSync('git', ['init', '-q', '--bare', '-b', 'main', bare])
+    git('remote', 'add', 'origin', bare)
+    return bare
+  }
+  return { dir, run, git, commit, origin }
 }

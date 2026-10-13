@@ -256,3 +256,8 @@ test('пагинация без X-Total-Count — до пустой страни
   })
   assert.equal((await instance.listThreads(42)).general.length, 2)
 })
+test('publishReplies: пустая цитата — без строки «> »', async () => {
+  const { instance, calls } = provider({ [`POST ${API}/issues/42/comments`]: ok('{}') })
+  await instance.publishReplies(42, [{ quote: '', body: 'Ответ' }])
+  assert.deepEqual(JSON.parse(calls[0].init?.body ?? ''), { body: 'Ответ' })
+})
