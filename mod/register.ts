@@ -1,6 +1,10 @@
 import { update, type Register, type EngineInterface, type HookStream, type ProcessSpawnChunk, type ProcessSpawnResult } from 'claude-code'
 import { classifyBash, decideBash, kitScriptPaths, kitUsage, messageProblem, KIT_OK_SENTINEL, POST_OK_SENTINEL, POST_REPLIES_OK_SENTINEL, type CommitPushMark, type PublishMark } from './policy.ts'
 import { accessDenial, manifestPaths, MAX_RETURNS, parseManifest, parseRole, unreadFiles, type GatedAgent } from './gate.ts'
+import { ADAPTERS, createProvider, selectProvider, withTimeout, type ExplicitConfig } from './forge/index.ts'
+import type { ForgeProvider } from './forge/types.ts'
+import { actionableRows, contextOf, intakeItems, loadPr, priorComments, scenarioOf, type ListRow, type PrContext, type PrData } from './status.ts'
+import { recheckBase } from './git.ts'
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
 const MARKS = { plugin: 'review-kit', key: 'marks' } as const
@@ -8,7 +12,9 @@ const PUBLISH_MARKS = { plugin: 'review-kit', key: 'publishMarks' } as const
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
 const CONFIRM_TEXT_LIMIT = 6000
 const TOOL_TIMEOUT_MS = 120_000
-const LIST_TIMEOUT_MS = 5 * 60 * 1000
+const HTTP_TIMEOUT_MS = 30_000
+const CONFIG_PATH = '.claude/review-kit.local.json'
+const SETTINGS: { options: Record<string, unknown> } = { options: {} }
 const MAX_DIALOG_OPTIONS = 4
 const CLEANUP_MIN_BRANCHES_AFTER_RUN = 5
 const KEEP = 'Оставить'
@@ -40,28 +46,6 @@ interface PlannotatorChild {
 }
 
 const plannotatorChildren = new Map<number, PlannotatorChild>()
-
-interface PrContext {
-  number: number
-  title: string
-  author: string
-  isOwn: boolean
-  headRef: string
-  headSha: string
-  baseRef: string
-  state: string
-  merged: boolean
-  url: string
-  scenario: 'closed' | 'feedback' | 'none-own' | 'review' | 'recheck' | 'wait-author'
-}
-
-interface ListRow {
-  number: number
-  title: string
-  author: string
-  isOwn: boolean
-  scenario: keyof typeof SCENARIO_LABEL
-}
 
 async function activeRun($: EngineInterface): Promise<number | undefined> {
   const { value } = await $.state.get(RUN)
@@ -152,6 +136,41 @@ function parseSaved(text: string): { head?: string; scenario?: string } | undefi
   }
 }
 
+type Loaded = { context: PrContext; data: PrData }
+
+async function explicitConfig($: EngineInterface): Promise<ExplicitConfig | undefined> {
+  const text = await $.fs.read(`${await projectRoot($)}/${CONFIG_PATH}`).then(String, () => '')
+  if (!text) return undefined
+  try {
+    const value = JSON.parse(text) as Record<string, unknown>
+    const field = (key: string) => (typeof value[key] === 'string' ? value[key] as string : undefined)
+    return { provider: field('provider'), host: field('host'), owner: field('owner'), repo: field('repo') }
+  } catch {
+    throw new Error(`${CONFIG_PATH}: не JSON`)
+  }
+}
+
+async function readTokens($: EngineInterface): Promise<Map<string, string | undefined>> {
+  return new Map([
+    ['FORGEJO_TOKEN', await $.env.get('FORGEJO_TOKEN')],
+    ['GITEA_TOKEN', await $.env.get('GITEA_TOKEN')],
+  ])
+}
+
+async function forge($: EngineInterface): Promise<ForgeProvider> {
+  const remote = await $.process.run(['git', 'remote', 'get-url', 'origin'])
+  const values = await readTokens($)
+  const missing = ADAPTERS.flatMap(adapter => adapter.tokenEnv).filter(name => !values.has(name))
+  if (missing.length) throw new Error(`review-kit: мод не читает переменные ${missing.join(', ')} — добавьте их в readTokens`)
+  const selection = selectProvider({
+    options: SETTINGS.options, config: await explicitConfig($), remoteUrl: remote.exitCode === 0 ? remote.stdout.trim() : '',
+    env: name => values.get(name),
+  })
+  if ('error' in selection) throw new Error(selection.error)
+  const sleep = (ms: number) => $.clock.sleep(ms)
+  return createProvider(selection, withTimeout((url, init) => $.http.fetch(url, init), sleep, HTTP_TIMEOUT_MS), sleep)
+}
+
 async function resumeRun($: EngineInterface, pr: number, handoff: Handoff): Promise<string> {
   const text = await $.fs.read(`${await runDir($, pr)}/context.json`).then(String, () => '')
   const saved = parseSaved(text)
@@ -159,7 +178,7 @@ async function resumeRun($: EngineInterface, pr: number, handoff: Handoff): Prom
   const head = (await $.process.run(['git', 'rev-parse', 'HEAD'])).stdout.trim()
   if (head !== saved.head) return `Дерево сдвинуто после прерванного прогона PR ${pr} (${head.slice(0, 7)} вместо ${saved.head.slice(0, 7)}) — начните заново: «Очистить».`
 
-  const fresh = JSON.parse(await runTool($, ['python3', `${$.plugin.root}/tools/pr_context.py`, String(pr)])) as PrContext
+  const fresh = (await prContext($, pr)).context
   const scenario = (saved.scenario && saved.scenario in SKILL_OF ? saved.scenario : 'review') as RunScenario
   await openRun($, { pr, context: fresh, head, scenario })
   return `Прогон PR ${pr} продолжен в этой сессии.${handOff($, pr, handoff, scenario)}`
@@ -257,8 +276,9 @@ async function switchOrRestore($: EngineInterface, { tools, pr, context, stash }
   }
 }
 
-async function prContext($: EngineInterface, pr: number): Promise<PrContext> {
-  return JSON.parse(await runTool($, ['python3', `${$.plugin.root}/tools/pr_context.py`, String(pr)])) as PrContext
+async function prContext($: EngineInterface, pr: number): Promise<Loaded> {
+  const data = await loadPr(await forge($), pr)
+  return { context: contextOf(data, scenarioOf(data)), data }
 }
 
 interface CleanupList {
@@ -393,7 +413,7 @@ async function routePr($: EngineInterface, pr: number | undefined, handoff: Hand
     const stop = await askAboutActive($, undefined)
     if (stop) return stop
 
-    const rows = JSON.parse(await runTool($, ['python3', `${$.plugin.root}/tools/pr_context.py`, '--list'], LIST_TIMEOUT_MS)) as ListRow[]
+    const rows: ListRow[] = await actionableRows(await forge($))
     if (rows.length === 0) return withCleanup($, 'По открытым PR делать нечего.', 0)
 
     const labels = rows.map(row => `#${row.number} ${SCENARIO_LABEL[row.scenario]} — ${row.title}`)
@@ -407,26 +427,30 @@ async function routePr($: EngineInterface, pr: number | undefined, handoff: Hand
     return typed ? routePr($, Number(typed[1]), handoff) : withCleanup($, 'Отменено.', 0)
   }
 
-  const context = await prContext($, pr)
-  if (context.scenario === 'review') return startReview($, pr, { context, handoff })
-  if (context.scenario === 'feedback') return startFix($, pr, { context, handoff, scenario: 'feedback' })
-  if (context.scenario === 'recheck') return startReview($, pr, { context, handoff, scenario: 'recheck' })
+  const loaded = await prContext($, pr)
+  const { context } = loaded
+  if (context.scenario === 'review') return startReview($, pr, { loaded, handoff })
+  if (context.scenario === 'feedback') return startFix($, pr, { loaded, handoff, scenario: 'feedback' })
+  if (context.scenario === 'recheck') return startReview($, pr, { loaded, handoff, scenario: 'recheck' })
   return context.scenario === 'closed' ? closedText(context) : SCENARIO_TEXT[context.scenario]
 }
 
-async function startReview($: EngineInterface, pr: number, { context, handoff, scenario = 'review' }: { context: PrContext; handoff: Handoff; scenario?: 'review' | 'recheck' }): Promise<string> {
+async function startReview($: EngineInterface, pr: number, { loaded, handoff, scenario = 'review' }: { loaded: Loaded; handoff: Handoff; scenario?: 'review' | 'recheck' }): Promise<string> {
+  const { context } = loaded
   if (context.state === 'closed' && !context.merged) return `PR ${pr} закрыт без слияния — ревью не делаю.`
   if (scenario === 'recheck' && context.isOwn) return `PR ${pr} — свой PR: перепроверка только чужого, замечания к своему — /pr-feedback ${pr}.`
-  return startRun($, pr, { context, handoff, scenario })
+  return startRun($, pr, { loaded, handoff, scenario })
 }
 
-async function startFix($: EngineInterface, pr: number, { context, handoff, scenario }: { context: PrContext; handoff: Handoff; scenario: 'feedback' | 'fix' }): Promise<string> {
+async function startFix($: EngineInterface, pr: number, { loaded, handoff, scenario }: { loaded: Loaded; handoff: Handoff; scenario: 'feedback' | 'fix' }): Promise<string> {
+  const { context } = loaded
   if (!context.isOwn) return `PR ${pr} не ваш: замечания и правки — только свой PR. Ревью чужого — /pr-review ${pr}.`
   if (context.state === 'closed') return `PR ${pr} закрыт — правок нет.`
-  return startRun($, pr, { context, handoff, scenario })
+  return startRun($, pr, { loaded, handoff, scenario })
 }
 
-async function startRun($: EngineInterface, pr: number, { context, handoff, scenario }: { context: PrContext; handoff: Handoff; scenario: RunScenario }): Promise<string> {
+async function startRun($: EngineInterface, pr: number, { loaded, handoff, scenario }: { loaded: Loaded; handoff: Handoff; scenario: RunScenario }): Promise<string> {
+  const { context } = loaded
   const stop = await askAboutActive($, pr)
   if (stop) return stop
 
@@ -455,7 +479,15 @@ async function startRun($: EngineInterface, pr: number, { context, handoff, scen
 
   const switched = await switchOrRestore($, { tools, pr, context, stash: saved })
   const dir = `${root}/.review-kit/run/${pr}`
-  if (scenario === 'feedback' || scenario === 'fix') await runTool($, ['python3', `${tools}/intake.py`, String(pr), '--out', dir])
+  if (scenario === 'feedback' || scenario === 'fix') {
+    await $.fs.write(`${dir}/intake.json`, JSON.stringify({ head: context.headSha, items: intakeItems(loaded.data) }, null, 2))
+  }
+  if (scenario === 'recheck') {
+    const prior = priorComments(loaded.data)
+    if (!prior) throw new Error(`моего ревью в PR ${pr} нет — перепроверять нечего; дерево на коммите PR${stash ? `, ваши изменения в stash «${stash}» — вернуть: /pr cleanup` : ''}`)
+    const base = await recheckBase(argv => $.process.run(argv), { lastCommit: prior.review.commitSha, head: switched.head, baseRef: context.baseRef })
+    await $.fs.write(`${dir}/recheck.json`, JSON.stringify({ ...base, reviewId: prior.review.id, prior: prior.prior }, null, 2))
+  }
   await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, model, scenario }))
   await openRun($, { pr, context, head: switched.head, scenario })
   const next = handOff($, pr, handoff, scenario)
@@ -686,7 +718,8 @@ const COMMAND_SPECS = [
   { name: 'pr-fix', description: 'Раунд правок своего PR', argumentHint: '<номер PR> | stop' },
 ]
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  SETTINGS.options = { ...options }
   on('session.start', async ($, e, next) => {
     for (const spec of TOOL_SPECS) {
       await $.tool.register(spec).catch(error => $.ui.log(`review-kit: инструмент ${spec.name} не зарегистрирован: ${String(error)}`))
@@ -711,7 +744,7 @@ export const register: Register = on => {
       if (!Number.isInteger(pr) || pr < 1) return { text: `Использование: /pr-${scenario} <номер PR> | /pr-${scenario} stop` }
 
       try {
-        return { text: await startFix($, pr, { context: await prContext($, pr), handoff: 'submit', scenario }) }
+        return { text: await startFix($, pr, { loaded: await prContext($, pr), handoff: 'submit', scenario }) }
       } catch (error) {
         return { text: `review-kit: ${(error as Error).message}` }
       }
@@ -731,7 +764,7 @@ export const register: Register = on => {
     if (!Number.isInteger(pr) || pr < 1) return { text: 'Использование: /pr-recheck <номер PR> | /pr-recheck stop' }
 
     try {
-      return { text: await startReview($, pr, { context: await prContext($, pr), handoff: 'submit', scenario: 'recheck' }) }
+      return { text: await startReview($, pr, { loaded: await prContext($, pr), handoff: 'submit', scenario: 'recheck' }) }
     } catch (error) {
       return { text: `review-kit: ${(error as Error).message}` }
     }
@@ -750,7 +783,7 @@ export const register: Register = on => {
     if (!Number.isInteger(pr) || pr < 1) return { text: 'Использование: /pr-review <номер PR> | /pr-review stop' }
 
     try {
-      return { text: await startReview($, pr, { context: await prContext($, pr), handoff: 'submit' }) }
+      return { text: await startReview($, pr, { loaded: await prContext($, pr), handoff: 'submit' }) }
     } catch (error) {
       return { text: `review-kit: ${(error as Error).message}` }
     }

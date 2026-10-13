@@ -8,9 +8,8 @@ description: Use when the review-kit mod or review_start opened a recheck run fo
 Read `.review-kit/run/<N>/context.json` (`head`, `baseRef`, `model`, `scenario`). No `context.json` → tell the user to run
 `/pr-recheck <N>` and stop. Ask nothing before the report.
 
-1. Run exactly: `python3 ${CLAUDE_PLUGIN_ROOT}/tools/recheck_prep.py <N> --head <head> --base-ref <baseRef> --out .review-kit/run/<N>`
-   It writes `.review-kit/run/<N>/recheck.json`: `base`, `mode` (`delta` — since my last review; `full` — history was rewritten, with `note`),
-   `prior` (my earlier comments). Exit 5 → show stderr, `review_finish`, stop.
+1. Read `.review-kit/run/<N>/recheck.json` (the mod wrote it when it opened the run): `base`, `mode` (`delta` — since my
+   last review; `full` — history was rewritten, with `note`), `prior` (my earlier comments).
 2. Statuses of my earlier comments: run exactly
    `python3 ${CLAUDE_PLUGIN_ROOT}/tools/triage_prep.py --pr <N> --mode recheck --items .review-kit/run/<N>/recheck.json --base <recheck base> --head <head> --model <model> --out .review-kit/run/<N>/triage`,
    call `Workflow` with `scriptPath: "${CLAUDE_PLUGIN_ROOT}/funnel/triage.js"` and the printed JSON as `args` (this instruction is the
