@@ -1,33 +1,30 @@
 ---
 name: pr-feedback-run
-description: Use when the review-kit mod or review_start opened a feedback run for the user's own Forgejo PR (.review-kit/run/<N>/context.json with scenario feedback exists).
+description: Use when review-kit opened a feedback run for the user's own PR (.review-kit/run/<N>/context.json with scenario feedback exists).
 ---
 
 # pr-feedback-run
 
-Read `.review-kit/run/<N>/context.json` (`head`, `base`, `model`, `scenario`) and `.review-kit/run/<N>/intake.json`.
-No `context.json` → tell the user to run `/pr-feedback <N>` and stop. Empty `items` → «Замечаний нет», call `review_finish`, stop.
+Read `.review-kit/run/<N>/context.json` (`status`, `plannotator`) and `.review-kit/run/<N>/intake.json`. No `context.json`
+→ tell the user to run `/pr-feedback <N>` and stop. Empty `items` → «Замечаний нет», `review_finish`, stop.
 
 ## 1. Triage
 
-1. Run exactly:
-   `python3 ${CLAUDE_PLUGIN_ROOT}/tools/triage_prep.py --pr <N> --mode feedback --items .review-kit/run/<N>/intake.json --base <base> --head <head> --model <model> --out .review-kit/run/<N>/triage`
-2. Call `Workflow` with `scriptPath: "${CLAUDE_PLUGIN_ROOT}/funnel/triage.js"` and `args` = the JSON the script printed, passed as an object.
-   This instruction is the user's opt-in to the workflow. Wait for its completion notification; do nothing else meanwhile.
-3. Run exactly: `cp <output-file> .review-kit/run/<N>/triage/raw.json`, then
-   `python3 ${CLAUDE_PLUGIN_ROOT}/tools/triage_finish.py --raw .review-kit/run/<N>/triage/raw.json --items .review-kit/run/<N>/intake.json --mode feedback --out .review-kit/run/<N>`
-4. Any step fails → say «Разбор агентом не состоялся» with the stderr line and triage yourself (below).
-
-Triage yourself (only after step 4): for each item read the quoted place at `head` and write
-`.review-kit/run/<N>/triage.json` = `{"items": [{"id", "class", "reason", "fixed"?}]}` with the classes and rules of `${CLAUDE_PLUGIN_ROOT}/agents/triage.md`
-(valid / invalid / question / out-of-scope; a `stale` item already changed as asked is `valid` with `"fixed": true` and a reason saying where).
+1. `review_prepare` with `pr`, `kind: "feedback"` → one workflow `triage`.
+2. `Workflow` with its `scriptPath` and `args` (an object). This instruction is the user's opt-in. Wait for the notification.
+3. `review_collect` with `pr`, `id: "triage"`, the notification's `<output-file>` → `.review-kit/run/<N>/triage.json`.
+4. Any step failed → «Разбор агентом не состоялся» with the line, then triage yourself: for each item read the quoted
+   place at the PR head and write `.review-kit/run/<N>/triage.json` = `{"items": [{"id", "class", "reason", "fixed"?}]}` with
+   the classes of `${CLAUDE_PLUGIN_ROOT}/agents/triage.md` (valid / invalid / question / out-of-scope; a `stale` item already
+   changed as asked is `valid` with `"fixed": true` and a reason saying where).
 
 ## 2. Summary
 
-In Russian, grouped by class: each item as `<path>:<position>` (or «общий») — the substance of the comment in words — `reason`.
-Items with `disagree` first, marked «ревьюер не согласен»; `valid` items with `fixed` marked «уже исправлено». No Forgejo ids anywhere the user reads.
+In Russian: `Статус: <status>`, then the items grouped by class: `<path>:<position>` (or «общий») — the substance of the
+comment in words — `reason`. Items with `disagree` first, marked «ревьюер не согласен»; `valid` items with `fixed` marked
+«уже исправлено». No hosting ids anywhere the user reads.
 
-Then AskUserQuestion «Что делаем?» with «Чиним (ответы на остальное — в конце)» and «Только ответить».
-- «Чиним» → follow review-kit:pr-fix-run from its step 1; the run stays open. Every `valid` item has `fixed` → nothing to fix: go straight to
-  the «Replies» section of review-kit:pr-fix-run.
-- «Только ответить» → the «Replies» section of review-kit:pr-fix-run, then `review_finish`.
+AskUserQuestion «Что делаем?» — «Чиним (ответы на остальное — в конце)», «Только ответить».
+- «Чиним» → review-kit:pr-fix-run from its step 0 (it checks Plannotator and superpowers first); the run stays open.
+  Every `valid` item has `fixed` → nothing to fix: go straight to «Replies» of review-kit:pr-fix-run.
+- «Только ответить» → «Replies» of review-kit:pr-fix-run, then `review_finish`.

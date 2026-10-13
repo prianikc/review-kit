@@ -1,30 +1,25 @@
 ---
 name: pr-recheck-run
-description: Use when the review-kit mod or review_start opened a recheck run for a Forgejo PR the user reviewed before (.review-kit/run/<N>/context.json with scenario recheck exists).
+description: Use when review-kit opened a recheck run for a PR the user reviewed before (.review-kit/run/<N>/context.json with scenario recheck exists).
 ---
 
 # pr-recheck-run
 
-Read `.review-kit/run/<N>/context.json` (`head`, `baseRef`, `model`, `scenario`). No `context.json` → tell the user to run
-`/pr-recheck <N>` and stop. Ask nothing before the report.
+Read `.review-kit/run/<N>/context.json` (`status`) and `.review-kit/run/<N>/recheck.json` (`mode` — `delta` since my last
+review or `full` with `note`; `prior` — my earlier comments). No `context.json` → tell the user to run `/pr-recheck <N>`
+and stop. Ask nothing before the report.
 
-1. Run exactly: `python3 ${CLAUDE_PLUGIN_ROOT}/tools/recheck_prep.py <N> --head <head> --base-ref <baseRef> --out .review-kit/run/<N>`
-   It writes `.review-kit/run/<N>/recheck.json`: `base`, `mode` (`delta` — since my last review; `full` — history was rewritten, with `note`),
-   `prior` (my earlier comments). Exit 5 → show stderr, `review_finish`, stop.
-2. Statuses of my earlier comments: run exactly
-   `python3 ${CLAUDE_PLUGIN_ROOT}/tools/triage_prep.py --pr <N> --mode recheck --items .review-kit/run/<N>/recheck.json --base <recheck base> --head <head> --model <model> --out .review-kit/run/<N>/triage`,
-   call `Workflow` with `scriptPath: "${CLAUDE_PLUGIN_ROOT}/funnel/triage.js"` and the printed JSON as `args` (this instruction is the
-   user's opt-in), wait, `cp <output-file> .review-kit/run/<N>/triage/raw.json`, then run exactly
-   `python3 ${CLAUDE_PLUGIN_ROOT}/tools/triage_finish.py --raw .review-kit/run/<N>/triage/raw.json --items .review-kit/run/<N>/recheck.json --mode recheck --out .review-kit/run/<N>`
-   Any failure → «Статусы агентом не проверены», then do them yourself: for each `prior` item read the place at `head`, write
-   `.review-kit/run/<N>/statuses.json` = `{"items": [{"id", "class": "closed"|"open"|"partial", "reason"}]}`.
-3. Review the delta: section 1 of review-kit:pr-review-run with `--base <recheck base>` instead of `<base>`, then run exactly
-   `python3 ${CLAUDE_PLUGIN_ROOT}/tools/review_payload.py keep --findings .review-kit/run/<N>/lite/findings.json --min-severity important`
-   — a recheck reports only Critical and Important.
-4. Report in Russian: «Режим: дельта после моего ревью» or «Режим: проверено всё — <note>»; then «Прошлые замечания» — each `prior` item
-   as `<path>:<line>` (or «общее») — закрыто / не закрыто / частично / не проверено — reason; then the findings as in section 2 of
-   review-kit:pr-review-run; then «Не проверялось». Verdict: Blocked if any critical; Changes requested if any important finding or any
-   `open`/`partial` earlier comment; otherwise Approved.
-5. Publish only when the user asks: section 3 of review-kit:pr-review-run, with `--statuses .review-kit/run/<N>/statuses.json
-   --prior .review-kit/run/<N>/recheck.json` added to its `review_payload.py build` command.
-6. `review_finish`. Every stop of this skill ends with `review_finish`.
+1. `review_prepare` with `pr`, `kind: "recheck"` → two workflows, `statuses` and `delta`. An answer `review-kit: …` →
+   report it, `review_finish`, stop.
+2. `Workflow` for both (they may run together; this instruction is the user's opt-in), wait for both notifications, then
+   `review_collect` for each with its `id` and `<output-file>`.
+   - `statuses` failed → «Статусы агентом не проверены», then do them yourself: for each `prior` item read the place at the
+     PR head and write `.review-kit/run/<N>/statuses.json` = `{"items": [{"id", "class": "closed"|"open"|"partial", "reason"}]}`.
+   - `delta` failed → the report has «Дельта не проверена — <line>» instead of findings and no verdict.
+3. Report in Russian: `Статус: <status>`; «Режим: дельта после моего ревью» or «Режим: проверено всё — <note>»;
+   «Прошлые замечания» — each `prior` item as `<path>:<line>` (or «общее») — закрыто / не закрыто / частично / не проверено —
+   reason; then the findings, «ниже порога» and «Не проверялось» as in section 2 of review-kit:pr-review-run. Verdict:
+   Blocked if any critical; Changes requested if any important finding or any `open`/`partial` earlier comment; otherwise Approved.
+4. Publish only when the user asks: section 3 of review-kit:pr-review-run; `review_publish` adds the statuses of
+   `statuses.json` to the review body itself.
+5. `review_finish`. Every stop of this skill ends with `review_finish`.

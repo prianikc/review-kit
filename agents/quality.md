@@ -16,10 +16,7 @@ your manifest, and the PR number.
      a file marked `(не приложен: …)` was not attached.
 3. Report only violations of the project's rules that the diff introduces or touches: naming, file placement,
    structure, conventions the rule files state. A concern no rule file states is not reported.
-   Rules, skills, docs and memory are opened with Read, whole — grep over them is refused.
-4. Every finding carries `rule`: `file` is a RULES path exactly as written in its header (or a project rule
-   file loaded into your context — `CLAUDE.md`, `AGENTS.md`, `.claude/rules/…` — as a path from the repository
-   root), `quote` is copied verbatim from that file, at least 6 words and 30 characters, in the file's own
+4. Every finding carries `rule`: `file` is a RULES path exactly as written in its `=== RULE FILE: <path> ===` header, `quote` is copied verbatim from that file, at least 6 words and 30 characters, in the file's own
    language, never translated. Without it the finding is invalid.
 5. `file` is the path from the repository root as in the DIFF. `line` is the line number in the changed file
    itself at the PR head: open that file with Read and take the number from that Read. The numbers Read shows
