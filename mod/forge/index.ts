@@ -45,3 +45,7 @@ function byRemote(options: Record<string, unknown>, remoteUrl: string, adapters:
 export function createProvider(selection: { adapter: ForgeAdapter; repo: Repo; token: string }, http: Http, sleep: (ms: number) => Promise<void>): ForgeProvider {
   return selection.adapter.create({ repo: selection.repo, token: selection.token, http, sleep })
 }
+
+export function withTimeout(http: Http, sleep: (ms: number) => Promise<void>, ms: number): Http {
+  return (url, init) => Promise.race([http(url, init), sleep(ms).then((): never => { throw new Error(`нет ответа за ${ms / 1000} с`) })])
+}

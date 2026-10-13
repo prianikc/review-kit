@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createProvider, selectProvider } from './index.ts'
+import { createProvider, selectProvider, withTimeout } from './index.ts'
 import type { ForgeAdapter } from './types.ts'
 
 const adapter = (id: string, host: string, tokenEnv = [`${id.toUpperCase()}_TOKEN`]): ForgeAdapter => ({
@@ -70,3 +70,16 @@ test('реестр по умолчанию узнаёт Forgejo', () => {
   const selection = selectProvider({ options: {}, remoteUrl: 'git@git.example.org:team/app.git', env: env({ FORGEJO_TOKEN: 'f' }) })
   assert.equal('adapter' in selection && selection.adapter.id, 'forgejo')
 })
+
+test('withTimeout: нет ответа за отведённое время — ошибка', async () => {
+  const never = () => new Promise<never>(() => {})
+  const http = withTimeout(never, async () => {}, 30_000)
+  await assert.rejects(http('https://x'), /нет ответа за 30 с/)
+})
+
+test('withTimeout: ответ успел — отдаётся как есть', async () => {
+  const response = { status: 200, ok: true, headers: {}, text: 'ok' }
+  const http = withTimeout(async () => response, () => new Promise<void>(() => {}), 30_000)
+  assert.equal(await http('https://x'), response)
+})
+
