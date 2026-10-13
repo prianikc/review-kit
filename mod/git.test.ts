@@ -153,6 +153,16 @@ test('раунд: commit → push; повтор после упавшего push
   assert.equal((await roundState(r.run, { branch: 'feat', roundBase, message: 'fix: x' })).state, 'pushed')
 })
 
+test('файлы вне списка: сдвинутый сабмодуль не считается — как в снимке статуса скилла', async () => {
+  const sub = repo(); sub.commit('s.txt', '1', 'sub 1')
+  const { r } = ownRound()
+  r.git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.dir, 'sub'); r.git('commit', '-qm', 'add sub')
+  sub.commit('s.txt', '2', 'sub 2')
+  r.git('-C', 'sub', '-c', 'protocol.file.allow=always', 'pull', '-q', 'origin', 'main')
+  writeFileSync(join(r.dir, 'a.txt'), '3')
+  assert.deepEqual(await foreignChanges(r.run, ['a.txt']), [])
+})
+
 test('файлы вне списка и пустой раунд', async () => {
   const { r } = ownRound()
   writeFileSync(join(r.dir, 'a.txt'), '3'); writeFileSync(join(r.dir, 'b.txt'), 'new'); r.git('add', 'b.txt')

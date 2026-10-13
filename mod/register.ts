@@ -504,6 +504,8 @@ async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; i
   await $.fs.write(`${out}/rules.json`, JSON.stringify(Object.fromEntries(rules)))
   await $.fs.write(`${out}/range.json`, JSON.stringify({ base, head }))
   await $.fs.write(`${out}/input.md`, input)
+  const script = `${w.items ? 'triage' : 'review-funnel'}.js`
+  await $.fs.write(`${out}/${script}`, String(await $.fs.read(`${$.plugin.root}/funnel/${script}`)))
   const copies = [...rules.keys()].map(path => `${out}/rules/${path}`)
   const roles = w.items ? [] : rules.size ? ['correctness', 'quality'] : ['correctness']
   for (const role of w.items ? ['triage'] : [...roles, 'refuter']) await $.fs.write(`${out}/manifest-${role}.txt`, manifestText(copies, notes))
@@ -511,7 +513,7 @@ async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; i
   const args = w.items
     ? { pr: w.pr, mode: w.mode, input: `${rel}/input.md`, manifestDir: rel, model: w.model, ids: w.items.map(item => item.id) }
     : { pr: w.pr, input: `${rel}/input.md`, manifestDir: rel, roles, model: w.model }
-  return { spec: { id: w.id, scriptPath: `${$.plugin.root}/funnel/${w.items ? 'triage' : 'review-funnel'}.js`, args }, notes }
+  return { spec: { id: w.id, scriptPath: `${out}/${script}`, args }, notes }
 }
 
 async function prepare($: EngineInterface, pr: number, kind: PrepareKind, paths: string[]): Promise<{ workflows: WorkflowSpec[]; notes: string[] }> {

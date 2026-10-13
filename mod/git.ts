@@ -195,7 +195,7 @@ export async function roundState(run: Run, { branch, roundBase, message }: { bra
 }
 
 export async function foreignChanges(run: Run, paths: string[]): Promise<string[]> {
-  const changed = (await gitText(run, ['diff', '--name-only', 'HEAD'])).split('\n').filter(Boolean)
+  const changed = (await gitText(run, ['diff', '--name-only', '--ignore-submodules=all', 'HEAD'])).split('\n').filter(Boolean)
   return changed.filter(path => !paths.includes(path))
 }
 
