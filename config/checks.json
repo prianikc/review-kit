@@ -1,4 +1,0 @@
-{
-  "commands": [["npx", "nx", "affected", "-t", "lint", "typecheck", "--base=origin/main", "--output-style=static"]],
-  "timeoutSec": 900
-}

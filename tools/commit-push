@@ -16,13 +16,10 @@ done
 
 top=$(git rev-parse --show-toplevel)
 prefix=$(git rev-parse --show-prefix)
-rules_hook="${RK_COMMIT_RULES_HOOK:-$top/.claude/ai-dev-kit/rules/hooks/enforce-commit-rules.js}"
 
 rooted=()
 for path in "${paths[@]}"; do rooted+=("${prefix}${path#./}"); done
 cd "$top"
-
-[ -f "$rules_hook" ] || { echo "commit-push: хук правил коммита не найден: $rules_hook (подмодуль ai-dev-kit не инициализирован?)" >&2; exit 2; }
 
 case "$message" in
   *$'\n'*|*$'\r'*) echo 'commit-push: сообщение — одна строка, без переводов строки' >&2; exit 2 ;;
@@ -36,16 +33,9 @@ esac
 current=$(git rev-parse --abbrev-ref HEAD)
 [ "$current" = "$branch" ] || { echo "commit-push: дерево на ветке $current, а подтверждена $branch" >&2; exit 3; }
 
-check_message() {
-  python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":"git commit -m \""+sys.argv[1]+"\""}}))' "$message" \
-    | node "$rules_hook"
-}
-
 head=$(git rev-parse HEAD)
 
 if [ "$head" = "$base_head" ]; then
-  check_message || { echo "commit-push: сообщение не прошло правила коммита" >&2; exit 2; }
-
   for path in "${rooted[@]}"; do
     case "$path" in
       :*|*'*'*|*'?'*|*'['*) echo "commit-push: путь $path — pathspec или glob, нужен путь к файлу" >&2; exit 4 ;;

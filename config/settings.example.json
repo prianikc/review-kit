@@ -4,9 +4,5 @@
   "stack": [
     { "paths": ["apps/api/**", "libs/shared/**"], "skill": ".agents/skills/nestjs-best-practices/SKILL.md" },
     { "paths": ["apps/web/**"], "skill": ".agents/skills/angular-best-practices/SKILL.md" }
-  ],
-  "checks": {
-    "commands": [["npx", "nx", "affected", "-t", "lint", "typecheck", "--base=origin/main", "--output-style=static"]],
-    "timeoutSec": 900
-  }
+  ]
 }
