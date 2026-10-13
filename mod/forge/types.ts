@@ -58,6 +58,7 @@ export interface Repo {
   host: string
   owner: string
   repo: string
+  scheme?: 'http' | 'https'
 }
 
 export interface HttpInit {

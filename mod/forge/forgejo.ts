@@ -15,12 +15,15 @@ interface RawReviewComment { id: number; user: RawUser; body: string; created_at
 interface RawIssueComment { id: number; user: RawUser; body: string; created_at: string }
 
 export function parseRemote(url: string): Repo | null {
-  const full = /^[a-z+]+:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+)$/i.exec(url.trim())
+  const full = /^([a-z+]+):\/\/(?:[^@/]+@)?([^/:]+)(:\d+)?\/(.+)$/i.exec(url.trim())
   const scp = /^[^@\s/]+@([^:\s/]+):(.+)$/.exec(url.trim())
-  const [, host, path] = full ?? scp ?? []
+  const web = full && /^https?$/i.test(full[1]) ? full[1].toLowerCase() : undefined
+  const host = full ? `${full[2]}${web ? full[3] ?? '' : ''}` : scp?.[1]
+  const path = full ? full[4] : scp?.[2]
   if (!host || !path) return null
   const parts = path.replace(/\/+$/, '').replace(/\.git$/, '').split('/').filter(Boolean)
-  return parts.length < 2 ? null : { host, owner: parts[parts.length - 2], repo: parts[parts.length - 1] }
+  if (parts.length < 2) return null
+  return { host, owner: parts[parts.length - 2], repo: parts[parts.length - 1], ...(web === 'http' ? { scheme: 'http' as const } : {}) }
 }
 
 function login(user: RawUser): string {
@@ -64,29 +67,36 @@ function createForgejo(deps: ProviderDeps): ForgeProvider {
   const repoPath = `/repos/${deps.repo.owner}/${deps.repo.repo}`
   const me: { value?: Promise<string> } = {}
 
-  const call = async (method: string, path: string, body?: unknown): Promise<unknown> => {
-    const response = await deps.http(`https://${deps.repo.host}/api/v1${path}`, {
+  const request = async (method: string, path: string, body?: unknown): Promise<{ data: unknown; headers: Record<string, string> }> => {
+    const response = await deps.http(`${deps.repo.scheme ?? 'https'}://${deps.repo.host}/api/v1${path}`, {
       method,
       headers: { Authorization: `token ${deps.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }).catch(error => { throw new Error(`${method} ${path}: сеть: ${String(error)}`) })
     if (!response.ok) throw Object.assign(new Error(`${method} ${path}: HTTP ${response.status} ${response.text.slice(0, 500)}`), { status: response.status })
-    return response.text ? JSON.parse(response.text) : null
+    return { data: response.text ? JSON.parse(response.text) : null, headers: response.headers }
   }
+
+  const call = async (method: string, path: string, body?: unknown): Promise<unknown> => (await request(method, path, body)).data
 
   const paged = async <T>(path: string): Promise<T[]> => {
     const all: T[] = []
     const join = path.includes('?') ? '&' : '?'
     for (let page = 1; ; page++) {
-      const items = (await call('GET', `${path}${join}page=${page}&limit=${PAGE_LIMIT}`)) as T[]
+      const { data, headers } = await request('GET', `${path}${join}page=${page}&limit=${PAGE_LIMIT}`)
+      const items = (data ?? []) as T[]
       all.push(...items)
-      if (items.length < PAGE_LIMIT) return all
+      const total = Number(headers['x-total-count'])
+      if (items.length === 0 || (Number.isFinite(total) && all.length >= total)) return all
     }
   }
 
   const rawReviews = (number: number) => paged<RawReview>(`${repoPath}/pulls/${number}/reviews`)
 
-  const currentUser = (): Promise<string> => (me.value ??= call('GET', '/user').then(user => (user as { login: string }).login))
+  const currentUser = (): Promise<string> => (me.value ??= call('GET', '/user').then(user => (user as { login: string }).login).catch(error => {
+    me.value = undefined
+    throw error
+  }))
 
   return {
     name: forgejo.name,
@@ -104,12 +114,12 @@ function createForgejo(deps: ProviderDeps): ForgeProvider {
     publishReview: async (number, draft) => {
       const body = { body: draft.body, event: EVENTS[draft.verdict], comments: draft.comments.map(c => ({ path: c.path, new_position: c.line, body: c.body })) }
       const before = new Set((await rawReviews(number)).map(review => review.id))
+      const author = (await currentUser()).toLowerCase()
       try {
         const posted = (await call('POST', `${repoPath}/pulls/${number}/reviews`, body)) as { html_url?: string }
         return { url: posted.html_url ?? '' }
       } catch (error) {
         if ((error as { status?: number }).status !== undefined) throw error
-        const author = (await currentUser()).toLowerCase()
         for (let attempt = 0; attempt < RECONCILE_ATTEMPTS; attempt++) {
           if (attempt > 0) await deps.sleep(RECONCILE_PAUSE_MS)
           const reviews = await rawReviews(number).catch(() => undefined)
@@ -145,7 +155,7 @@ export const forgejo: ForgeAdapter = {
   tokenEnv: ['FORGEJO_TOKEN', 'GITEA_TOKEN'],
   detect: remoteUrl => {
     const repo = parseRemote(remoteUrl)
-    return repo && !FOREIGN_HOSTS.includes(repo.host.toLowerCase()) ? repo : null
+    return repo && !FOREIGN_HOSTS.includes(repo.host.split(':')[0].toLowerCase()) ? repo : null
   },
   create: createForgejo,
 }

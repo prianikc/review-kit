@@ -21,7 +21,8 @@ function fakeHttp(routes: Record<string, Route | Route[]>) {
   }
   return { http, calls }
 }
-const ok = (text: string): HttpResponse => ({ status: 200, ok: true, headers: {}, text })
+const ok = (text: string, headers: Record<string, string> = {}): HttpResponse => ({ status: 200, ok: true, headers, text })
+const list = (text: string, total?: number): HttpResponse => ok(text, { 'x-total-count': String(total ?? (JSON.parse(text) as unknown[]).length) })
 const provider = (routes: Record<string, Route | Route[]>) => {
   const { http, calls } = fakeHttp(routes)
   const sleeps: number[] = []
@@ -29,18 +30,17 @@ const provider = (routes: Record<string, Route | Route[]>) => {
   return { instance, calls, sleeps }
 }
 const READ_ROUTES = {
-  [`GET ${API}/pulls/42/reviews?page=1&limit=50`]: ok(fixture('reviews.json')),
+  [`GET ${API}/pulls/42/reviews?page=1&limit=50`]: list(fixture('reviews.json')),
   [`GET ${API}/pulls/42/reviews/11/comments`]: ok(fixture('review-comments-11.json')),
   [`GET ${API}/pulls/42/reviews/12/comments`]: ok(fixture('review-comments-12.json')),
   [`GET ${API}/pulls/42/reviews/13/comments`]: ok('[]'),
   [`GET ${API}/pulls/42/reviews/15/comments`]: ok('[]'),
-  [`GET ${API}/issues/42/comments?page=1&limit=50`]: ok(fixture('issue-comments.json')),
+  [`GET ${API}/issues/42/comments?page=1&limit=50`]: list(fixture('issue-comments.json')),
 }
 
 test('parseRemote: формы remote', () => {
   const want = { host: 'git.example.org', owner: 'team', repo: 'app' }
   assert.deepEqual(parseRemote('https://git.example.org/team/app.git'), want)
-  assert.deepEqual(parseRemote('https://git.example.org:3000/team/app/'), want)
   assert.deepEqual(parseRemote('ssh://git@git.example.org:2222/team/app.git'), want)
   assert.deepEqual(parseRemote('git@git.example.org:team/app.git'), want)
   assert.deepEqual(parseRemote('git.example.org/team/app'), null)
@@ -88,8 +88,8 @@ test('пагинация: 50 + 3 ревью — две страницы, нич�
   const page1 = Array.from({ length: 50 }, (_, i) => review(i + 1))
   const page2 = [51, 52, 53].map(review)
   const { instance, calls } = provider({
-    [`GET ${API}/pulls/42/reviews?page=1&limit=50`]: ok(JSON.stringify(page1)),
-    [`GET ${API}/pulls/42/reviews?page=2&limit=50`]: ok(JSON.stringify(page2)),
+    [`GET ${API}/pulls/42/reviews?page=1&limit=50`]: list(JSON.stringify(page1), 53),
+    [`GET ${API}/pulls/42/reviews?page=2&limit=50`]: list(JSON.stringify(page2), 53),
   })
   assert.equal((await instance.listReviews(42)).length, 53)
   assert.equal(calls.length, 2)
@@ -126,13 +126,14 @@ test('pullRef и capabilities', () => {
 })
 
 const DRAFT = { verdict: 'request-changes' as const, body: 'Нужны правки', comments: [{ path: 'src/a.ts', line: 5, body: 'null' }] }
-const REVIEWS_BEFORE = () => ok('[{"id":11,"user":{"login":"alice"},"state":"COMMENT","body":"старое","commit_id":"c","submitted_at":"2026-10-01T00:00:00Z"}]')
-const REVIEWS_AFTER = () => ok('[{"id":11,"user":{"login":"alice"},"state":"COMMENT","body":"старое","commit_id":"c","submitted_at":"2026-10-01T00:00:00Z"},{"id":16,"user":{"login":"Alice"},"state":"REQUEST_CHANGES","body":"Нужны правки","commit_id":"c","submitted_at":"2026-10-05T00:00:00Z","html_url":"https://git.example.org/team/app/pulls/42#review-16"}]')
+const REVIEWS_BEFORE = () => list('[{"id":11,"user":{"login":"alice"},"state":"COMMENT","body":"старое","commit_id":"c","submitted_at":"2026-10-01T00:00:00Z"}]')
+const REVIEWS_AFTER = () => list('[{"id":11,"user":{"login":"alice"},"state":"COMMENT","body":"старое","commit_id":"c","submitted_at":"2026-10-01T00:00:00Z"},{"id":16,"user":{"login":"Alice"},"state":"REQUEST_CHANGES","body":"Нужны правки","commit_id":"c","submitted_at":"2026-10-05T00:00:00Z","html_url":"https://git.example.org/team/app/pulls/42#review-16"}]')
 const USER = ok('{"login":"alice"}')
 
 test('publishReview: событие, new_position, ссылка', async () => {
   const { instance, calls } = provider({
     [`GET ${API}/pulls/42/reviews?page=1&limit=50`]: REVIEWS_BEFORE(),
+    ['GET https://git.example.org/api/v1/user']: USER,
     [`POST ${API}/pulls/42/reviews`]: ok('{"id":16,"html_url":"https://git.example.org/team/app/pulls/42#review-16"}'),
   })
   assert.deepEqual(await instance.publishReview(42, DRAFT), { url: 'https://git.example.org/team/app/pulls/42#review-16' })
@@ -142,19 +143,20 @@ test('publishReview: событие, new_position, ссылка', async () => {
 
 test('publishReview: approve и comment маппятся на APPROVED и COMMENT', async () => {
   for (const [verdict, event] of [['approve', 'APPROVED'], ['comment', 'COMMENT']] as const) {
-    const { instance, calls } = provider({ [`GET ${API}/pulls/42/reviews?page=1&limit=50`]: ok('[]'), [`POST ${API}/pulls/42/reviews`]: ok('{"html_url":"u"}') })
+    const { instance, calls } = provider({ [`GET ${API}/pulls/42/reviews?page=1&limit=50`]: list('[]'), ['GET https://git.example.org/api/v1/user']: USER, [`POST ${API}/pulls/42/reviews`]: ok('{"html_url":"u"}') })
     await instance.publishReview(42, { verdict, body: '', comments: [] })
-    assert.equal(JSON.parse(calls[1].init?.body ?? '').event, event)
+    assert.equal(JSON.parse(calls.find(c => c.init?.method === 'POST')?.init?.body ?? '').event, event)
   }
 })
 
 test('publishReview: ошибка HTTP — без reconcile', async () => {
   const { instance, calls } = provider({
     [`GET ${API}/pulls/42/reviews?page=1&limit=50`]: REVIEWS_BEFORE(),
+    ['GET https://git.example.org/api/v1/user']: USER,
     [`POST ${API}/pulls/42/reviews`]: { status: 422, ok: false, headers: {}, text: 'bad' },
   })
   await assert.rejects(instance.publishReview(42, DRAFT), /HTTP 422/)
-  assert.equal(calls.length, 2)
+  assert.equal(calls.filter(c => c.url.includes('/reviews?')).length, 1)
 })
 
 test('publishReview: обрыв связи, ревью создано — находит его, не публикует снова', async () => {
@@ -200,4 +202,57 @@ test('publishReplies: битый threadId — ошибка до отправки
   const { instance, calls } = provider({})
   await assert.rejects(instance.publishReplies(42, [{ threadId: 'xyz', body: 'a' }]), /неизвестный тред xyz/)
   assert.equal(calls.length, 0)
+})
+
+test('parseRemote: порт и схема http(s)-remote сохраняются, ssh-порт — нет', () => {
+  assert.deepEqual(parseRemote('https://git.example.org:3000/team/app/'), { host: 'git.example.org:3000', owner: 'team', repo: 'app' })
+  assert.deepEqual(parseRemote('http://git.example.org:3000/team/app'), { host: 'git.example.org:3000', owner: 'team', repo: 'app', scheme: 'http' })
+  assert.deepEqual(parseRemote('ssh://git@git.example.org:2222/team/app.git'), { host: 'git.example.org', owner: 'team', repo: 'app' })
+})
+
+test('запросы идут на схему и порт из remote', async () => {
+  const { http, calls } = fakeHttp({ ['GET http://git.example.org:3000/api/v1/user']: ok('{"login":"a"}') })
+  const repo = parseRemote('http://git.example.org:3000/team/app')
+  if (!repo) throw new Error('remote не разобран')
+  await forgejo.create({ repo, token: 'T', http, sleep: async () => {} }).currentUser()
+  assert.equal(calls[0].url, 'http://git.example.org:3000/api/v1/user')
+})
+
+test('publishReview: /user недоступен — ничего не публикуется, ошибка понятна', async () => {
+  const { instance, calls } = provider({
+    [`GET ${API}/pulls/42/reviews?page=1&limit=50`]: REVIEWS_BEFORE(),
+    ['GET https://git.example.org/api/v1/user']: new Error('ECONNRESET'),
+  })
+  await assert.rejects(instance.publishReview(42, DRAFT), /GET \/user: сеть/)
+  assert.equal(calls.filter(c => c.init?.method === 'POST').length, 0)
+})
+
+test('currentUser: неудачный запрос не кешируется', async () => {
+  const { instance, calls } = provider({ ['GET https://git.example.org/api/v1/user']: [new Error('blip'), ok('{"login":"alice"}')] })
+  await assert.rejects(instance.currentUser(), /сеть/)
+  assert.equal(await instance.currentUser(), 'alice')
+  assert.equal(calls.length, 2)
+})
+
+test('пагинация: сервер отдаёт по 30 — читаем до X-Total-Count', async () => {
+  const comment = (id: number) => ({ id, user: { login: 'x' }, body: 'b', created_at: '2026-10-01T00:00:00Z' })
+  const range = (from: number, n: number) => JSON.stringify(Array.from({ length: n }, (_, i) => comment(from + i)))
+  const { instance, calls } = provider({
+    [`GET ${API}/pulls/42/reviews?page=1&limit=50`]: list('[]'),
+    [`GET ${API}/issues/42/comments?page=1&limit=50`]: list(range(1, 30), 70),
+    [`GET ${API}/issues/42/comments?page=2&limit=50`]: list(range(31, 30), 70),
+    [`GET ${API}/issues/42/comments?page=3&limit=50`]: list(range(61, 10), 70),
+  })
+  assert.equal((await instance.listThreads(42)).general.length, 70)
+  assert.equal(calls.length, 4)
+})
+
+test('пагинация без X-Total-Count — до пустой страницы', async () => {
+  const comment = (id: number) => ({ id, user: { login: 'x' }, body: 'b', created_at: '2026-10-01T00:00:00Z' })
+  const { instance } = provider({
+    [`GET ${API}/pulls/42/reviews?page=1&limit=50`]: list('[]'),
+    [`GET ${API}/issues/42/comments?page=1&limit=50`]: ok(JSON.stringify([comment(1), comment(2)])),
+    [`GET ${API}/issues/42/comments?page=2&limit=50`]: ok('[]'),
+  })
+  assert.equal((await instance.listThreads(42)).general.length, 2)
 })
