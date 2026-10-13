@@ -1,0 +1,7 @@
+{
+  "number": 42, "title": "Добавить экспорт", "state": "open", "merged": false,
+  "html_url": "https://git.example.org/team/app/pulls/42",
+  "user": { "login": "Bob" },
+  "head": { "ref": "feature/export", "sha": "aaa111" },
+  "base": { "ref": "main" }
+}

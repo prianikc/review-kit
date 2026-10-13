@@ -1,0 +1,7 @@
+[
+  { "id": 11, "user": { "login": "alice" }, "state": "REQUEST_CHANGES", "body": "Есть замечания", "commit_id": "aaa000", "submitted_at": "2026-10-01T10:00:00Z", "dismissed": false, "html_url": "https://git.example.org/team/app/pulls/42#review-11" },
+  { "id": 12, "user": { "login": "carol" }, "state": "APPROVED", "body": "", "commit_id": "aaa111", "submitted_at": "2026-10-02T10:00:00Z", "dismissed": true, "html_url": "https://git.example.org/team/app/pulls/42#review-12" },
+  { "id": 13, "user": { "login": "alice" }, "state": "PENDING", "body": "", "commit_id": "aaa111", "submitted_at": null, "dismissed": false, "html_url": "" },
+  { "id": 14, "user": { "login": "dave" }, "state": "REQUEST_REVIEW", "body": "", "commit_id": "aaa111", "submitted_at": "2026-10-03T10:00:00Z", "dismissed": false, "html_url": "" },
+  { "id": 15, "user": null, "state": "COMMENT", "body": "призрак", "commit_id": "aaa111", "submitted_at": "2026-10-04T10:00:00Z", "dismissed": false, "html_url": "" }
+]
