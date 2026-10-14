@@ -6,6 +6,9 @@ declare module 'claude-code' {
     'review-kit': {
       run: ReviewKitRun
       gatedAgent: StateFamily<ReviewKitGatedAgent>
+      commitPending: boolean
+      commitTurn: boolean
+      sessionFiles: string[]
     }
   }
 }

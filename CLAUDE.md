@@ -18,7 +18,7 @@
 |---|---|
 | `.claude-plugin/` | `plugin.json` (манифест, версия, `userConfig` — галочка системы) и `marketplace.json` |
 | `hooks/hooks.json` | подключает мод: `{"modules": ["../mod/register.ts"]}` |
-| `mod/register.ts` | команды `/pr`, `/pr-review`, `/pr-feedback`, `/pr-fix`, `/pr-recheck`; инструменты `review_start`, `review_prepare`, `review_collect`, `review_publish`, `replies_publish`, `commit_push`, `review_plannotator`, `review_tab`, `review_finish`; хуки и состояние прогона |
+| `mod/register.ts` | команды `/pr`, `/pr-review`, `/pr-feedback`, `/pr-fix`, `/pr-recheck`; инструменты `review_start`, `review_prepare`, `review_collect`, `review_publish`, `replies_publish`, `commit_push`, `review_plannotator`, `review_tab`, `review_finish`; хуки и состояние прогона, окно ручного `/commit` и файлы сессии |
 | `mod/forge/` | общая модель хостинга (`types.ts`), выбор адаптера и токена (`index.ts`), адаптер Forgejo/Gitea (`forgejo.ts`), фейковый провайдер для тестов |
 | `mod/status.ts` | сценарий и статус PR, intake замечаний, прошлые замечания для перепроверки |
 | `mod/run/` | вход агентам и поиск правил (`input.ts`), сбор находок и триажа (`findings.ts`), тело ревью и ответы (`review.ts`) |
@@ -30,7 +30,7 @@
 | `types/index.d.ts` | типы состояния плагина |
 | `funnel/` | Workflow-скрипты: `review-funnel.js` (A/B → C), `triage.js` (D) |
 | `agents/` | `correctness` (A), `quality` (B), `refuter` (C), `triage` (D); без Edit/Write, запускаются только из workflow |
-| `skills/` | `pr-flow`, `pr-review-run`, `pr-feedback-run`, `pr-fix-run`, `pr-recheck-run`, `pr-tab` |
+| `skills/` | `pr-flow`, `pr-review-run`, `pr-feedback-run`, `pr-fix-run`, `pr-recheck-run`, `pr-tab`, `commit` |
 | `config/funnel.json` | пороги воронки |
 
 Рабочие файлы прогона в целевом проекте: `.review-kit/run/<N>/` (`context.json`, `intake.json`, вход и ответы агентов).
@@ -41,7 +41,9 @@
   регистрации роняет `session.start`, и в сессии не остаётся ни одного инструмента review-kit.
 - Необратимые действия (публикация ревью или ответов, commit+push раунда) — только инструментами `review_publish`,
   `replies_publish`, `commit_push`: каждый сам спрашивает подтверждение, «да» в чате не считается.
-- Внутри активного прогона внешние эффекты идут только через инструменты мода; мод отклоняет сырые команды.
+- Внутри активного прогона внешние эффекты идут только через инструменты мода; мод отклоняет сырые команды. Единственное
+  исключение — ручной `/commit`: в ходе, который человек начал этой командой, главный цикл может выполнить ровно `git commit`
+  (не push, не amend). Скилл `commit` вызывает только человек (`disable-model-invocation`).
 - Каждая остановка скилла заканчивается `review_finish` (кроме остановок Plannotator в `pr-fix-run`) — открытый прогон держит guard включённым.
 - Ветки и stash удаляются только через вопросы мода (`/pr cleanup`), не по инициативе агента.
 - Находка агента обязана нести сценарий отказа; без него отбрасывается.

@@ -1,5 +1,5 @@
 import { update, type Register, type EngineInterface, type HookStream, type ProcessSpawnChunk, type ProcessSpawnResult } from 'claude-code'
-import { classifyBash, guardText } from './policy.ts'
+import { addSessionFile, allowsManualCommit, classifyBash, guardText, isCommitCommand, opensCommitWindow, sessionFilesBlock } from './policy.ts'
 import { manifestPaths, MAX_RETURNS, parseManifest, parseRole, unreadFiles, type GatedAgent } from './gate.ts'
 import { ADAPTERS, createProvider, selectProvider, withTimeout, type ExplicitConfig } from './forge/index.ts'
 import type { ForgeProvider } from './forge/types.ts'
@@ -12,6 +12,10 @@ import { buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, typ
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
+const COMMIT_PENDING = { plugin: 'review-kit', key: 'commitPending' } as const
+const COMMIT_TURN = { plugin: 'review-kit', key: 'commitTurn' } as const
+const SESSION_FILES = { plugin: 'review-kit', key: 'sessionFiles' } as const
+const EDIT_TOOLS = { Edit: 'file_path', Write: 'file_path', NotebookEdit: 'notebook_path' } as const
 const CONFIRM_TEXT_LIMIT = 6000
 const HTTP_TIMEOUT_MS = 30_000
 const CONFIG_PATH = '.claude/review-kit.local.json'
@@ -1095,10 +1099,32 @@ export const register: Register = (on, options) => {
   for (const tool of ['Bash', 'Monitor']) {
     on('tool.call', { tool }, async ($, e, next) => {
       if ((await activeRun($)) === undefined) return next(e)
-      const deny = guardText(classifyBash(String((e as { command?: string }).command ?? '')))
+      const command = String((e as { command?: string }).command ?? '')
+      const commitTurn = (await $.state.get(COMMIT_TURN)).value === true
+      if (allowsManualCommit(command, commitTurn, (e as { agentId?: string }).agentId)) return next(e)
+      const deny = guardText(classifyBash(command))
       return deny ? { deny } : next(e)
     }).catch(($, e, next) => (next.called ? next(e) : { deny: GUARD_FAILED }))
   }
+
+  on('prompt.submit', async ($, e, next) => {
+    const result = await next(e)
+    if (!e.isMeta && !('drop' in result)) await $.state.set(COMMIT_PENDING, opensCommitWindow(e.command?.name, e.origin?.kind))
+    return result
+  }).catch(($, e, next) => next(e))
+
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) {
+      await $.state.set(COMMIT_TURN, (await $.state.get(COMMIT_PENDING)).value === true)
+      await $.state.set(COMMIT_PENDING, false)
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('turn.complete', async ($, e, next) => {
+    if (e.agentId === undefined) await $.state.set(COMMIT_TURN, false)
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   on('agent.spawn', async ($, e, next) => {
     const role = parseRole(e.prompt)
@@ -1113,6 +1139,22 @@ export const register: Register = (on, options) => {
       await gateLog($, { pr, role, manifest: parseManifest(e.prompt) }, started.agentId, { role, event: 'hook-error', error: String(error) }).catch(() => undefined)
     }
     return started
+  }).catch(($, e, next) => next(e))
+
+  for (const [tool, field] of Object.entries(EDIT_TOOLS)) {
+    on('tool.call', { tool }, async ($, e, next) => {
+      const ran = await next(e)
+      const path = (e as Record<string, unknown>)[field]
+      if (ran.isError || 'deny' in ran || typeof path !== 'string') return ran
+      await update($, SESSION_FILES, files => addSessionFile((files as string[] | undefined) ?? [], path)).catch(() => undefined)
+      return ran
+    }).catch(($, e, next) => next(e))
+  }
+
+  on('skill.prompt', async ($, e, next) => {
+    if (e.pluginName !== 'review-kit' || !isCommitCommand(e.skill)) return next(e)
+    const files = ((await $.state.get(SESSION_FILES)).value as string[] | undefined) ?? []
+    return next({ ...e, text: `${e.text}\n\n${sessionFilesBlock(files)}` })
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'Read' }, async ($, e, next) => {
