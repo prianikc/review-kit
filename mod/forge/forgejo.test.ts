@@ -63,6 +63,11 @@ test('getPull: маппинг и заголовок авторизации', asy
   assert.equal(calls[0].init?.headers?.Authorization, 'token T')
 })
 
+test('commitDate: дата коммиттера', async () => {
+  const { instance } = provider({ [`GET ${API}/git/commits/aaa111`]: ok(JSON.stringify({ sha: 'aaa111', created: '2026-10-01T09:00:00Z', commit: { committer: { date: '2026-10-01T10:00:00Z' } } })) })
+  assert.equal(await instance.commitDate('aaa111'), '2026-10-01T10:00:00Z')
+})
+
 test('listReviews: состояния, черновик, снятое, без REQUEST_REVIEW, призрак', async () => {
   const { instance } = provider(READ_ROUTES)
   const reviews = await instance.listReviews(42)

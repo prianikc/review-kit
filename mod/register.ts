@@ -6,7 +6,7 @@ import type { ForgeProvider } from './forge/types.ts'
 import { ACTIONABLE, contextOf, pullRows, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type ListRow, type PrContext, type PrData } from './status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, readRules, type TriageItem } from './run/input.ts'
 import { collectFindings, finishTriage, type Finding, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
-import { applySwitch, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitRound, deleteBranches, foreignChanges, gitText, holder as worktreeHolder, inMainTree, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
+import { applySwitch, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitRound, deleteBranches, foreignChanges, gitText, headShift, holder as worktreeHolder, inMainTree, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
 import { annotations, decisionOf, fixResult, parseMessage, reconcile } from './plannotator.ts'
 import { buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, type Texts } from './run/review.ts'
 
@@ -27,8 +27,9 @@ const CANCEL = 'Отмена'
 const WORKTREE_TITLE = 'Worktree законченных ревью (вкладки pr-tab) — удалить вместе с ненужными ветками?'
 const CONTINUE_THERE = 'Продолжить там'
 const CLEAR = 'Очистить'
+const CONTINUE_HEAD = 'Продолжить с текущим HEAD'
 const SCENARIO_TEXT = {
-  'none-own': 'Замечаний к вашему PR нет.',
+  'none-own': 'Новых замечаний к вашему PR нет — ждём ревью. Ответить на прежние или поправить ещё — /pr-feedback <номер>, /pr-fix <номер>.',
   'wait-author': 'Ждём автора: после вашего ревью нет ни новых коммитов, ни ответов в ваших тредах.',
 } as const
 const GUARD_FAILED = 'review-kit: guard failed — действие отклонено'
@@ -123,9 +124,9 @@ function submitLater($: EngineInterface, text: string, attempts: number): void {
   }))
 }
 
-function parseSaved(text: string): { head?: string; scenario?: string } | undefined {
+function parseSaved(text: string): { head?: string; headRef?: string; scenario?: string } | undefined {
   try {
-    return JSON.parse(text) as { head?: string; scenario?: string }
+    return JSON.parse(text) as { head?: string; headRef?: string; scenario?: string }
   } catch {
     return undefined
   }
@@ -166,17 +167,26 @@ async function forge($: EngineInterface): Promise<ForgeProvider> {
   return createProvider(selection, withTimeout((url, init) => $.http.fetch(url, init), sleep, HTTP_TIMEOUT_MS), sleep)
 }
 
-async function resumeRun($: EngineInterface, pr: number, handoff: Handoff): Promise<string> {
-  const text = await $.fs.read(`${await runDir($, pr)}/context.json`).then(String, () => '')
+async function resumeRun($: EngineInterface, pr: number, handoff: Handoff): Promise<string | typeof CLEAR> {
+  const dir = await runDir($, pr)
+  const text = await $.fs.read(`${dir}/context.json`).then(String, () => '')
   const saved = parseSaved(text)
   if (!saved?.head) return `Прогон PR ${pr} повреждён — выберите «Очистить».`
   const head = (await $.process.run(['git', 'rev-parse', 'HEAD'])).stdout.trim()
-  if (head !== saved.head) return `Дерево сдвинуто после прерванного прогона PR ${pr} (${head.slice(0, 7)} вместо ${saved.head.slice(0, 7)}) — начните заново: «Очистить».`
+  const shift = await headShift(runner($), { saved: saved.head, head, branch: saved.headRef ?? '' })
+  if (shift === 'moved') {
+    const question = `Дерево сдвинуто после прерванного прогона PR ${pr}: ${head.slice(0, 7)} вместо ${saved.head.slice(0, 7)}, и этого коммита нет на origin.`
+    const answer = await $.ui.ask(question, [CONTINUE_HEAD, CLEAR, CANCEL]).catch(() => CANCEL)
+    if (answer === CLEAR) return CLEAR
+    if (answer !== CONTINUE_HEAD) return 'Отменено: дерево не тронуто.'
+  }
+  if (shift !== 'same') await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...JSON.parse(text), head }))
 
   const fresh = (await prContext($, pr)).context
   const scenario = (saved.scenario && saved.scenario in SKILL_OF ? saved.scenario : 'review') as RunScenario
   await openRun($, { pr, context: fresh, head, scenario })
-  return `Прогон PR ${pr} продолжен в этой сессии.${handOff($, pr, handoff, scenario)}`
+  const moved = shift === 'same' ? '' : ` Прогон идёт с текущего HEAD ${head.slice(0, 7)}.`
+  return `Прогон PR ${pr} продолжен в этой сессии.${moved}${handOff($, pr, handoff, scenario)}`
 }
 
 async function finishRun($: EngineInterface, pr: number, status: 'done' | 'aborted'): Promise<void> {
@@ -221,7 +231,7 @@ async function stashTop($: EngineInterface): Promise<string> {
 }
 
 async function stashOrCancel($: EngineInterface, pr: number): Promise<SavedStash | 'cancel'> {
-  const answer = await $.ui.ask(`В дереве есть незакоммиченные изменения. Ревью PR ${pr} переключит ветку.`, ['Убрать в stash', 'Отменить'])
+  const answer = await $.ui.ask(`В дереве есть незакоммиченные изменения. Ревью PR ${pr} переключит ветку.`, ['Убрать в stash', 'Отменить']).catch(() => undefined)
   if (answer !== 'Убрать в stash') return 'cancel'
 
   const now = (await $.process.run(['date', '+%Y-%m-%d %H:%M:%S'])).stdout.trim()
@@ -373,7 +383,7 @@ async function routePr($: EngineInterface, pr: number | undefined, handoff: Hand
 
     const { rows, truncated } = await pullRows(await forge($))
     const actionable = rows.filter(row => ACTIONABLE.includes(row.scenario))
-    const line = (row: ListRow) => `#${row.number} ${row.status} — ${row.title}`
+    const line = (row: ListRow) => `#${row.number} ${row.status} · ${row.author} — ${row.title}`
     const tail = truncated ? '\nПрочитано 50 открытых PR — это предел одного запроса; если PR больше, остальные — /pr <номер>' : ''
     if (actionable.length === 0) return withCleanup($, rows.length ? `Открытые PR:\n${rows.map(line).join('\n')}\nДелать нечего.${tail}` : 'Открытых PR нет.', 0)
     const labels = actionable.map(line)
@@ -418,10 +428,11 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
 
   if (await foreignRun($, pr)) {
     const question = `Прогон PR ${pr} открыт в другой сессии. Если та вкладка ещё открыта — сначала закройте прогон там.`
-    const answer = await $.ui.ask(question, ['Продолжить здесь', 'Очистить', 'Отмена']).catch(() => undefined)
-    if (answer === 'Продолжить здесь') return resumeRun($, pr, handoff)
-    if (answer !== 'Очистить') return 'Отменено: дерево не тронуто.'
-    await deleteRunDir($, pr)
+    const answer = await $.ui.ask(question, ['Продолжить здесь', CLEAR, CANCEL]).catch(() => undefined)
+    if (answer === 'Продолжить здесь') {
+      const resumed = await resumeRun($, pr, handoff)
+      if (resumed !== CLEAR) return resumed
+    } else if (answer !== CLEAR) return 'Отменено: дерево не тронуто.'
   }
 
   const held = await releaseWorktree($, { pr, headRef: context.headRef })

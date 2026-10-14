@@ -12,6 +12,8 @@ review-kit:pr-feedback-run first.
 0. Dependencies, before any edit: `superpowers:writing-plans` is not among your skills → «Для раунда правок нужен плагин
    superpowers», `review_finish`, stop. `plannotator: false` in `context.json` → «Для раунда правок нужен Plannotator
    (проверка правок перед push)», `review_finish`, stop.
+   The round needs a fresher base of a PR stack → the user merges and pushes it before the round. A merge inside the run
+   is allowed, but `commit_push` refuses until it is pushed («не продолжает базу раунда одним коммитом»).
 1. Run: `git status --porcelain --ignore-submodules=all > .review-kit/run/<N>/status-before.txt`
 2. Enter Plan Mode, plan the fixes of exactly these items with superpowers:writing-plans, exit Plan Mode, wait for approval, edit.
 3. The round's paths = paths in `git status --porcelain --ignore-submodules=all` that are not in `status-before.txt`.

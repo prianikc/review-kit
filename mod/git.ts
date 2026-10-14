@@ -185,13 +185,19 @@ export function messageProblem(message: string): string | undefined {
 export async function roundState(run: Run, { branch, roundBase, message }: { branch: string; roundBase: string; message: string }): Promise<{ state: RoundState; roundBase: string }> {
   await run(['git', 'fetch', '-q', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`])
   const head = (await gitText(run, ['rev-parse', 'HEAD'])).trim()
-  const parent = (await run(['git', 'rev-parse', '-q', '--verify', 'HEAD^'])).stdout.trim()
+  const parents = (await gitText(run, ['rev-list', '--parents', '-n', '1', 'HEAD'])).trim().split(' ').slice(1)
+  const parent = parents.length === 1 ? parents[0] : ''
   const base = head === roundBase || parent === roundBase ? roundBase : (await gitText(run, ['merge-base', 'HEAD', `origin/${branch}`])).trim()
   if (head === base) return { state: 'commit', roundBase: base }
   const subject = (await gitText(run, ['log', '-1', '--format=%s'])).trim()
   if (parent !== base) throw new Error(`HEAD ${head.slice(0, 7)} не продолжает базу раунда ${base.slice(0, 7)} одним коммитом`)
   if (subject !== message) throw new Error(`коммит раунда уже есть с сообщением «${subject}» — передайте его же`)
   return { state: (await isAncestor(run, 'HEAD', `origin/${branch}`)) ? 'pushed' : 'push', roundBase: base }
+}
+
+export async function headShift(run: Run, { saved, head, branch }: { saved: string; head: string; branch: string }): Promise<'same' | 'pushed' | 'moved'> {
+  if (head === saved) return 'same'
+  return (await isAncestor(run, saved, head)) && (await isAncestor(run, head, `origin/${branch}`)) ? 'pushed' : 'moved'
 }
 
 export async function foreignChanges(run: Run, paths: string[]): Promise<string[]> {

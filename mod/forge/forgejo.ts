@@ -104,6 +104,10 @@ function createForgejo(deps: ProviderDeps): ForgeProvider {
     currentUser,
     listPulls: async state => ((await call('GET', `${repoPath}/pulls?state=${state}&page=1&limit=${PAGE_LIMIT}`)) as RawPull[]).map(toPull),
     getPull: async number => toPull((await call('GET', `${repoPath}/pulls/${number}`)) as RawPull),
+    commitDate: async sha => {
+      const raw = (await call('GET', `${repoPath}/git/commits/${sha}`)) as { created?: string; commit?: { committer?: { date?: string } } }
+      return raw.commit?.committer?.date ?? raw.created ?? ''
+    },
     listReviews: async number => (await rawReviews(number)).map(toReview).filter((review): review is Review => review !== null),
     listThreads: async number => {
       const reviews = (await rawReviews(number)).filter(review => REVIEW_STATES[review.state])

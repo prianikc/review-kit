@@ -6,7 +6,7 @@ import { binaryFiles, changedFiles, fileDiff, showFile, snapshot, treeEntries } 
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { applySwitch, claudeCodeChanges, planSwitch } from './git.ts'
-import { branchCandidates, commitRound, deleteBranches, foreignChanges, messageProblem, pushRound, reviewStashes, roundState, stashAction } from './git.ts'
+import { branchCandidates, commitRound, deleteBranches, foreignChanges, headShift, messageProblem, pushRound, reviewStashes, roundState, stashAction } from './git.ts'
 import { createReviewWorktree, shellQuote, worktreeName } from './git.ts'
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -151,6 +151,26 @@ test('раунд: commit → push; повтор после упавшего push
   await assert.rejects(roundState(r.run, { branch: 'feat', roundBase, message: 'другое' }), /коммит раунда уже есть с сообщением «fix: x»/)
   assert.deepEqual(await pushRound(r.run, 'feat'), { ok: true })
   assert.equal((await roundState(r.run, { branch: 'feat', roundBase, message: 'fix: x' })).state, 'pushed')
+})
+
+test('раунд после влитой и запушенной базы: merge-коммит — не коммит раунда, база раунда — новый HEAD', async () => {
+  const { r, roundBase } = ownRound()
+  r.git('switch', '-qc', 'base', 'main'); r.commit('b.txt', '1', 'base work')
+  r.git('switch', '-q', 'feat'); r.git('merge', '-q', '--no-ff', '-m', 'Merge base', 'base'); r.git('push', '-q', 'origin', 'feat')
+  const merged = r.git('rev-parse', 'HEAD')
+  assert.deepEqual(await roundState(r.run, { branch: 'feat', roundBase, message: 'fix: x' }), { state: 'commit', roundBase: merged })
+})
+
+test('headShift: тот же HEAD; влитая и запушенная база — законный сдвиг; не на origin или не потомок — сдвиг', async () => {
+  const { r, roundBase } = ownRound()
+  assert.equal(await headShift(r.run, { saved: roundBase, head: roundBase, branch: 'feat' }), 'same')
+  const merged = r.commit('m.txt', '1', 'merge base')
+  assert.equal(await headShift(r.run, { saved: roundBase, head: merged, branch: 'feat' }), 'moved')
+  r.git('push', '-q', 'origin', 'feat')
+  assert.equal(await headShift(r.run, { saved: roundBase, head: merged, branch: 'feat' }), 'pushed')
+  r.git('switch', '-qc', 'other', 'main')
+  const elsewhere = r.commit('o.txt', '1', 'other')
+  assert.equal(await headShift(r.run, { saved: roundBase, head: elsewhere, branch: 'feat' }), 'moved')
 })
 
 test('файлы вне списка: сдвинутый сабмодуль не считается — как в снимке статуса скилла', async () => {

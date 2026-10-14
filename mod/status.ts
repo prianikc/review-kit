@@ -11,6 +11,7 @@ export interface PrData {
   reviews: Review[]
   threads: Thread[]
   general: Comment[]
+  headAt?: string
 }
 
 export interface IntakeItem {
@@ -25,6 +26,7 @@ export interface IntakeItem {
   quote: string
   stale: boolean
   disagree: boolean
+  at: string
 }
 
 export interface PriorItem {
@@ -83,7 +85,8 @@ function live(data: PrData): { reviews: Review[]; threads: Thread[] } {
 
 export async function loadPr(provider: ForgeProvider, number: number, pull?: PullRequest): Promise<PrData> {
   const [loaded, me, reviews, discussion] = await Promise.all([pull ?? provider.getPull(number), provider.currentUser(), provider.listReviews(number), provider.listThreads(number)])
-  return { pull: loaded, me, reviews, threads: discussion.threads, general: discussion.general }
+  const headAt = same(loaded.author, me) ? await provider.commitDate(loaded.headSha).catch(() => '') : undefined
+  return { pull: loaded, me, reviews, threads: discussion.threads, general: discussion.general, ...(headAt ? { headAt } : {}) }
 }
 
 export function intakeItems(data: PrData): IntakeItem[] {
@@ -103,18 +106,18 @@ export function intakeItems(data: PrData): IntakeItem[] {
       id: `${first.reviewId ?? thread.id}/${first.id}`, kind: 'thread', reviewId: first.reviewId ?? null, threadId: thread.id, path: first.path ?? null,
       position: first.line ?? null, commitId: commit, author: lastOf(thread).author,
       quote: thread.comments.map(comment => `${comment.author}: ${comment.body}`).join('\n'), stale: commit !== data.pull.headSha,
-      disagree: thread.comments.slice(0, -1).some(comment => mine(comment, me)),
+      disagree: thread.comments.slice(0, -1).some(comment => mine(comment, me)), at: lastOf(thread).createdAt,
     }
   })
   const issueItems: IntakeItem[] = data.general.filter(comment => !mine(comment, me) && later(comment.createdAt)).map(comment => ({
     id: `issue/${comment.id}`, kind: 'issue', reviewId: null, threadId: null, path: null, position: null, commitId: '',
-    author: comment.author, quote: comment.body, stale: false, disagree: false,
+    author: comment.author, quote: comment.body, stale: false, disagree: false, at: comment.createdAt,
   }))
   const reviewItems: IntakeItem[] = reviews
     .filter(review => (review.state === 'changes' || review.state === 'comment') && review.body.trim() && !same(review.author, me) && later(review.submittedAt))
     .map(review => ({
       id: `review/${review.id}`, kind: 'review', reviewId: review.id, threadId: null, path: null, position: null, commitId: review.commitSha,
-      author: review.author, quote: review.body, stale: false, disagree: false,
+      author: review.author, quote: review.body, stale: false, disagree: false, at: review.submittedAt,
     }))
   return [...threadItems, ...issueItems, ...reviewItems]
 }
@@ -123,9 +126,14 @@ function latestMine(reviews: Review[], me: string): Review | undefined {
   return reviews.filter(review => same(review.author, me)).sort((a, b) => Date.parse(a.submittedAt) - Date.parse(b.submittedAt)).at(-1)
 }
 
+function awaitsMe(data: PrData): boolean {
+  const pushed = Date.parse(data.headAt ?? '')
+  return intakeItems(data).some(item => !(Date.parse(item.at) <= pushed))
+}
+
 export function scenarioOf(data: PrData): Scenario {
   if (data.pull.state === 'closed') return 'closed'
-  if (same(data.pull.author, data.me)) return intakeItems(data).length > 0 ? 'feedback' : 'none-own'
+  if (same(data.pull.author, data.me)) return awaitsMe(data) ? 'feedback' : 'none-own'
 
   const { reviews, threads } = live(data)
   const last = latestMine(reviews, data.me)

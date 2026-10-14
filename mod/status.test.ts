@@ -39,7 +39,7 @@ test('свой PR: открытый тред с чужим последним с
   assert.equal(scenarioOf(d), 'feedback')
   assert.deepEqual(intakeItems(d), [{
     id: 'r1/c1', kind: 'thread', reviewId: 'r1', threadId: 'r1:a.ts:3', path: 'a.ts', position: 3, commitId: 'h1',
-    author: 'carol', quote: 'carol: Имя', stale: true, disagree: false,
+    author: 'carol', quote: 'carol: Имя', stale: true, disagree: false, at: '2026-10-01T10:00:00Z',
   }])
 })
 
@@ -64,6 +64,17 @@ test('свой PR: общий комментарий и ревью с текст
   const general = [comment('g1', 'carol', 'старое', '2026-10-01T09:00:00Z'), comment('g2', 'alice', 'мой', '2026-10-01T10:00:00Z'), comment('g3', 'dave', 'новое', '2026-10-01T11:00:00Z')]
   const reviews = [review('r7', 'carol', 'changes', 'h2', '2026-10-01T12:00:00Z', 'Поправьте'), review('r8', 'erin', 'comment', 'h2', '2026-10-01T12:30:00Z', '   ')]
   assert.deepEqual(intakeItems(own({ general, reviews })).map(i => [i.id, i.kind]), [['issue/g3', 'issue'], ['review/r7', 'review']])
+})
+
+test('свой PR: после моего последнего коммита ревьюеры молчат → ждём ревью, но треды остаются в intake', () => {
+  const threads = [thread([comment('c1', 'carol', 'Имя', '2026-10-01T10:00:00Z')])]
+  const reviews = [review('r7', 'carol', 'changes', 'h1', '2026-10-01T10:30:00Z', 'Поправьте')]
+  const fixed = own({ threads, reviews, headAt: '2026-10-01T11:00:00Z' })
+  assert.equal(scenarioOf(fixed), 'none-own')
+  assert.equal(statusOf(fixed, 'none-own'), 'ждём ревью')
+  assert.deepEqual(intakeItems(fixed).map(i => i.id), ['r1/c1', 'review/r7'])
+  const later = [thread([comment('c1', 'carol', 'Имя', '2026-10-01T10:00:00Z'), comment('c2', 'carol', 'И тут', '2026-10-01T12:00:00Z')])]
+  assert.equal(scenarioOf(own({ threads: later, headAt: '2026-10-01T11:00:00Z' })), 'feedback')
 })
 
 test('свой PR: тред черновика не учитывается', () => {
@@ -99,12 +110,14 @@ test('contextOf: поля для прогона', () => {
 test('фейковый провайдер: четыре сценария без изменений ядра', async () => {
   const pulls = [pull({ number: 1, author: 'alice' }), pull({ number: 2 }), pull({ number: 3 }), pull({ number: 4 })]
   const fake = fakeProvider({
-    me: 'alice', pulls,
+    me: 'alice', pulls, commits: { h2: '2026-09-30T10:00:00Z' },
     reviews: { 3: [review('r3', 'alice', 'changes', 'h1')], 4: [review('r4', 'alice', 'changes', 'h2')] },
     threads: { 1: { threads: [thread([comment('c1', 'carol', 'Имя', '2026-10-01T10:00:00Z')])], general: [] } },
   })
   const scenarios = await Promise.all([1, 2, 3, 4].map(async n => scenarioOf(await loadPr(fake, n))))
   assert.deepEqual(scenarios, ['feedback', 'review', 'recheck', 'wait-author'])
+  assert.equal((await loadPr(fake, 1)).headAt, '2026-09-30T10:00:00Z')
+  assert.equal((await loadPr(fake, 2)).headAt, undefined)
   assert.deepEqual((await pullRows(fake)).rows.filter(r => ACTIONABLE.includes(r.scenario)).map(r => [r.number, r.scenario]), [[1, 'feedback'], [2, 'review'], [3, 'recheck']])
 })
 

@@ -9,7 +9,7 @@
 
 ## Состояние
 
-Версия 3.0. Спека — `docs/superpowers/specs/2026-10-12-review-kit-3-design.md`; `PLAN.md` — исходный план, решения спеки
+Версия 3.0.x (точная — `version` в `.claude-plugin/plugin.json`). Спека — `docs/superpowers/specs/2026-10-12-review-kit-3-design.md`; `PLAN.md` — исходный план, решения спеки
 его уточняют. Платформа — POSIX (Linux, macOS, WSL), git ≥ 2.31, Node 24.
 
 ## Устройство
@@ -85,3 +85,6 @@
 ## Git
 
 - Репозиторий: https://github.com/prianikc/review-kit, ветка `main`.
+- **Каждый пуш в `main`, меняющий плагин, поднимает `version` в `.claude-plugin/plugin.json`** (semver: исправление —
+  patch, новое поведение — minor). Без этого установленный плагин не обновится через
+  `claude plugin marketplace update review-kit && claude plugin update review-kit@review-kit` — придётся переустанавливать.

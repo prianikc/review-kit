@@ -15,6 +15,7 @@ test('сырые git-команды и curl-запись распознаютс�
   assert.equal(classifyBash('curl -X POST https://x'), 'raw-write')
   assert.equal(classifyBash('git status && git log'), 'other')
   assert.equal(classifyBash("bash -c 'git push'"), 'raw-push')
+  assert.equal(classifyBash('git merge origin/base'), 'other')
 })
 
 test('guardText: что запрещено и чем пользоваться', () => {

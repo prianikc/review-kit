@@ -3,6 +3,7 @@ import type { Comment, ForgeProvider, PullRequest, Reply, Review, ReviewDraft, T
 export interface FakeData {
   me: string
   pulls: PullRequest[]
+  commits?: Record<string, string>
   reviews?: Record<number, Review[]>
   threads?: Record<number, { threads: Thread[]; general: Comment[] }>
 }
@@ -28,6 +29,7 @@ export function fakeProvider(data: FakeData): FakeProvider {
     currentUser: async () => data.me,
     listPulls: async state => data.pulls.filter(item => item.state === state),
     getPull: async number => pull(number),
+    commitDate: async sha => data.commits?.[sha] ?? '',
     listReviews: async number => data.reviews?.[number] ?? [],
     listThreads: async number => data.threads?.[number] ?? { threads: [], general: [] },
     publishReview: async (number, draft) => {
