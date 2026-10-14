@@ -36,6 +36,12 @@ test('цитата правила: найдена после нормализа�
   assert.deepEqual(result.dropped, [{ id: 'B-2', reason: 'rule-file-not-provided' }])
 })
 
+test('опровергнутая находка с плохой цитатой правила — причина refuted, а не проверка цитаты', () => {
+  const short = finding({ id: 'B-1', role: 'quality', failureScenario: undefined, rule: { file: 'CLAUDE.md', quote: 'комментарий' } })
+  const result = collectFindings({ ...base, raw: raw([short], [{ id: 'B-1', verdict: 'refuted', evidence: 'src/a.ts:3 — так принято' }]) })
+  assert.deepEqual(result.dropped, [{ id: 'B-1', reason: 'refuted:src/a.ts:3 — так принято' }])
+})
+
 test('файл не в diff и строка за концом файла — выпадают', () => {
   const result = collectFindings({ ...base, raw: raw([finding({ id: 'A-1', file: 'x.ts' }), finding({ id: 'A-2', line: 99 })], []) })
   assert.deepEqual(result.dropped.map(d => d.reason), ['file-not-in-diff', 'line-out-of-range'])

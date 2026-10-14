@@ -1,4 +1,4 @@
-import { binaryFiles, changedFiles, fileDiff, showFile, treeEntries, type Run } from '../git.ts'
+import { binaryFiles, changedFiles, fileDiff, reviewed, showFile, treeEntries, type Run } from '../git.ts'
 
 export const MAX_FILE_CHARS = 60_000
 export const MAX_INPUT_CHARS = 250_000
@@ -47,8 +47,8 @@ export function lineCount(text: string): number {
   return lines[lines.length - 1] === '' ? lines.length - 1 : lines.length
 }
 
-export async function fileStates(run: Run, base: string, head: string): Promise<Map<string, FileState>> {
-  const [changed, types, binary] = await Promise.all([changedFiles(run, base, head), treeEntries(run, head), binaryFiles(run, base, head)])
+export async function fileStates(run: Run, base: string, head: string, paths?: string[]): Promise<Map<string, FileState>> {
+  const [changed, types, binary] = await Promise.all([paths ?? changedFiles(run, base, head), treeEntries(run, head), binaryFiles(run, base, head)])
   const states = new Map<string, FileState>()
   for (const path of changed) {
     const type = types.get(path)
@@ -92,12 +92,14 @@ export async function readRules(run: Run, { rev, base, head }: { rev: string; ba
 
 export async function buildInput(run: Run, { base, head, rules, items }: { base: string; head: string; rules: Map<string, string>; items?: TriageItem[] }): Promise<string> {
   const rulesText = [...rules].map(([path, text]) => `=== RULE FILE: ${path} ===\n${fenced(text)}`).join('\n\n')
-  const changed = await changedFiles(run, base, head)
+  const all = await changedFiles(run, base, head)
+  const changed = items ? all : reviewed(all)
   const diffs = await Promise.all(changed.map(async path => {
     const diff = await fileDiff(run, base, head, path)
     return diff.length > MAX_FILE_CHARS ? `--- ${path} (дифф не приложен: больше ${MAX_FILE_CHARS} символов)\n` : diff
   }))
-  const states = await fileStates(run, base, head)
+  if (changed.length < all.length) diffs.push(`--- .claude/ (не ревьюится: ${all.length - changed.length} файл(ов))\n`)
+  const states = await fileStates(run, base, head, changed)
   const skipped = notAttached(states)
   const files = [...states].map(([path, state]) => (skipped.has(path) ? `=== FILE: ${path} === (не приложен: ${skipped.get(path)})` : `=== FILE: ${path} ===\n${fenced(state.text ?? '')}`)).join('\n\n')
   const sections = [`## RULES\n${rulesText}`, `## DIFF\n${fenced(diffs.join(''), 'diff')}`, `## FILES\n${files}`, ...(items ? [itemsSection(items)] : [])]

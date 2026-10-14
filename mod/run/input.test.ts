@@ -55,6 +55,18 @@ test('buildInput: разделы RULES/DIFF/FILES и ITEMS; лимит вход�
   await assert.rejects(buildInput(r.run, { base, head, rules: huge }), /вход .* больше лимита/)
 })
 
+test('buildInput: ревью без файлов .claude/ и со строкой пропуска; triage — с ними', async () => {
+  const r = repo()
+  const base = r.commit('a.ts', '1\n', 'base')
+  r.commit('.claude/project-snapshot/files.txt', 'a.ts\n', 'snap')
+  const head = r.commit('a.ts', '2\n', 'head')
+  const review = await buildInput(r.run, { base, head, rules: new Map() })
+  assert.doesNotMatch(review, /project-snapshot/)
+  assert.match(review, /--- \.claude\/ \(не ревьюится: 1 файл\(ов\)\)/)
+  const triage = await buildInput(r.run, { base, head, rules: new Map(), items: [{ id: 'i1', path: 'a.ts', position: 1, author: 'c', quote: 'q', stale: false }] })
+  assert.match(triage, /=== FILE: \.claude\/project-snapshot\/files\.txt ===/)
+})
+
 test('itemsSection: общий пункт и disagree', () => {
   assert.equal(itemsSection([{ id: 'issue/1', author: 'dave', quote: 'когда?', disagree: true }]), '## ITEMS\n### issue/1 — общий — dave (disagree)\nкогда?')
 })

@@ -199,6 +199,10 @@ export function collectFindings(input: { raw: unknown; changed: string[]; lineCo
   const valid: Finding[] = []
   const invalid: Array<{ id: string; reason: string }> = []
   for (const item of resolved) {
+    if (item.verdict === 'refuted') {
+      invalid.push({ id: item.id, reason: `refuted:${item.evidence}` })
+      continue
+    }
     const line = item.verdict === 'confirmed' ? evidenceLine(item.evidence, item.file) : null
     const located = line !== null && line >= 1 && line <= (input.lineCounts.get(item.file) ?? 0) ? { ...item, line, lines: [line] } : item
     const checked = checkedItem(located, input.rules, input.changed, input.lineCounts)

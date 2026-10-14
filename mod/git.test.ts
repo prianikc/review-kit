@@ -7,7 +7,7 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { applySwitch, claudeCodeChanges, planSwitch } from './git.ts'
 import { branchCandidates, commitRound, deleteBranches, foreignChanges, headShift, messageProblem, pushRound, reviewStashes, roundState, stashAction } from './git.ts'
-import { createReviewWorktree, shellQuote, worktreeName } from './git.ts'
+import { createReviewWorktree, reviewed, shellQuote, worktreeName } from './git.ts'
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 
@@ -73,9 +73,21 @@ test('snapshot: коммит поверх HEAD с путями раунда, р�
   assert.equal(r.git('diff', '--cached', '--name-only'), '')
 })
 
-test('claudeCodeChanges: настройки Claude Code на любой глубине', () => {
-  assert.deepEqual(claudeCodeChanges(['src/a.ts', '.claude/settings.json', 'pkg/.mcp.json', 'x/CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.claude-plugin/plugin.json', 'docs/claude.md']),
-    ['.claude/settings.json', 'pkg/.mcp.json', 'x/CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.claude-plugin/plugin.json'])
+test('claudeCodeChanges: исполняемое и инструкции на любой глубине; данные в .claude/ — не риск', () => {
+  const changed = [
+    'src/a.ts', 'docs/claude.md', '.claude/project-snapshot/files.txt', '.claude/worktrees.txt',
+    '.claude/settings.json', 'pkg/.claude/settings.local.json', '.claude/hooks/a.json', '.claude/agents/x.md', '.claude/commands/c.md', '.claude/skills/s/SKILL.md',
+    '.claude/update-project-snapshot.sh', 'pkg/.mcp.json', '.claude-plugin/plugin.json',
+    'x/CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.claude/rules/a.md',
+  ]
+  assert.deepEqual(claudeCodeChanges(changed), {
+    executable: ['.claude/settings.json', 'pkg/.claude/settings.local.json', '.claude/hooks/a.json', '.claude/agents/x.md', '.claude/commands/c.md', '.claude/skills/s/SKILL.md', '.claude/update-project-snapshot.sh', 'pkg/.mcp.json', '.claude-plugin/plugin.json'],
+    instructions: ['x/CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.claude/rules/a.md'],
+  })
+})
+
+test('reviewed: без файлов из каталогов .claude', () => {
+  assert.deepEqual(reviewed(['.claude/x', 'pkg/.claude/y', 'src/claude.ts', 'CLAUDE.md', '.claude-plugin/plugin.json']), ['src/claude.ts', 'CLAUDE.md', '.claude-plugin/plugin.json'])
 })
 
 const SWITCH = { number: 7, headRef: 'feat', baseRef: 'main', own: false, pullRef: 'refs/pull/7/head' }
@@ -253,8 +265,17 @@ test('worktree ревью: PR меняет настройки Claude Code — wo
   assert.equal(worktreeName('/r', 7, "x';curl e|sh;'$(id)"), '/r/.claude/worktrees/pr-7-x--curl-e-sh----id-')
   assert.equal(shellQuote("/a b/it's"), `'/a b/it'\\''s'`)
   const first = await createReviewWorktree(r.run, { ...input, isActive: async () => false })
-  assert.deepEqual([first.created, first.risky], [false, ['.claude/settings.json']])
+  assert.deepEqual([first.created, first.executable], [false, ['.claude/settings.json']])
   assert.equal(existsSync(first.path), false)
+})
+
+test('worktree ревью: PR меняет только инструкции и данные .claude/ — worktree создаётся, инструкции в ответе', async () => {
+  const r = repo(); r.origin()
+  r.commit('a.txt', '1', 'base'); r.git('push', '-q', 'origin', 'main')
+  r.git('switch', '-qc', 'feat'); r.commit('CLAUDE.md', 'x', 'doc'); r.commit('.claude/project-snapshot/files.txt', 'a', 'snap')
+  const head = r.git('rev-parse', 'HEAD'); r.git('push', '-q', 'origin', 'feat'); r.git('switch', '-q', 'main')
+  const tree = await createReviewWorktree(r.run, { root: r.dir, number: 3, headRef: 'feat', headSha: head, baseRef: 'main', pullRef: 'refs/pull/3/head', isActive: async () => false })
+  assert.deepEqual([tree.created, tree.executable, tree.instructions], [true, [], ['CLAUDE.md']])
 })
 
 test('worktree ревью: создаётся; повтор ставит на новую голову PR; грязный или с активным прогоном — ошибка; без базы — отказ', async () => {

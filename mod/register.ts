@@ -6,7 +6,7 @@ import type { ForgeProvider } from './forge/types.ts'
 import { ACTIONABLE, contextOf, pullRows, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type ListRow, type PrContext, type PrData } from './status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, readRules, type TriageItem } from './run/input.ts'
 import { collectFindings, finishTriage, type Finding, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
-import { applySwitch, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitRound, deleteBranches, foreignChanges, gitText, headShift, holder as worktreeHolder, inMainTree, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
+import { applySwitch, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitRound, deleteBranches, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
 import { annotations, decisionOf, fixResult, parseMessage, reconcile } from './plannotator.ts'
 import { buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, type Texts } from './run/review.ts'
 
@@ -448,9 +448,13 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
   const provider = await forge($)
   const plan = await planSwitch(run, { number: pr, headRef: context.headRef, headSha: context.headSha, baseRef: context.baseRef, own: context.isOwn, pullRef: provider.pullRef(pr) })
   if (!context.isOwn) {
-    const risky = claudeCodeChanges(await changedFiles(run, plan.base, plan.target))
-    if (risky.length) {
-      const answer = await $.ui.ask(`PR ${pr} меняет настройки Claude Code:\n${risky.join('\n')}\nХуки и MCP из них могут выполнить команды на вашей машине, когда дерево переключится на PR.`, ['Отмена', 'Продолжить']).catch(() => 'Отмена')
+    const { executable, instructions } = claudeCodeChanges(await changedFiles(run, plan.base, plan.target))
+    if (executable.length || instructions.length) {
+      const what = [
+        ...(executable.length ? [`Настройки, хуки, MCP — могут выполнить команды на вашей машине, когда дерево переключится на PR:\n${executable.join('\n')}`] : []),
+        ...(instructions.length ? [`Инструкции агенту — следующие сессии в этом дереве их прочитают:\n${instructions.join('\n')}`] : []),
+      ]
+      const answer = await $.ui.ask(`PR ${pr} меняет файлы Claude Code.\n${what.join('\n')}`, ['Отмена', 'Продолжить']).catch(() => 'Отмена')
       if (answer !== 'Продолжить') return 'Отменено: дерево не тронуто.'
     }
   }
@@ -576,11 +580,12 @@ async function collect($: EngineInterface, pr: number, id: WorkflowId, outputFil
   const run = runner($)
   const { base, head } = JSON.parse(String(await $.fs.read(`${out}/range.json`))) as { base: string; head: string }
   const rules = new Map(Object.entries(JSON.parse(String(await $.fs.read(`${out}/rules.json`))) as Record<string, string>))
-  const states = await fileStates(run, base, head)
+  const changed = reviewed(await changedFiles(run, base, head))
+  const states = await fileStates(run, base, head, changed)
   const lineCounts = new Map([...states].filter(([, s]) => s.text !== null).map(([path, s]) => [path, lineCount(s.text ?? '')]))
   const table = (JSON.parse(String(await $.fs.read(`${$.plugin.root}/config/funnel.json`))) as { threshold: ThresholdRow[] }).threshold
   const result = collectFindings({
-    raw, changed: await changedFiles(run, base, head), lineCounts, rules, skipped: notAttached(states), table, ...(await workflowNotes($, out)),
+    raw, changed, lineCounts, rules, skipped: notAttached(states), table, ...(await workflowNotes($, out)),
     ...(id === 'delta' ? { minSeverity: 'important' as Severity } : {}),
   })
   const json = JSON.stringify(result, null, 2)
@@ -707,10 +712,11 @@ async function openTabs($: EngineInterface, prs: number[]): Promise<string> {
     const tree = await createReviewWorktree(run, { root, number, headRef: pull.headRef, headSha: pull.headSha, baseRef: pull.baseRef, pullRef: provider.pullRef(number), isActive: isActive($) })
       .catch((error: Error) => ({ error: error.message }))
     if ('error' in tree) { lines.push(`PR ${number}: ${tree.error}`); continue }
-    if (tree.risky.length) { lines.push(`PR ${number} меняет настройки Claude Code (${tree.risky.join(', ')}) — вкладку с новой сессией в режиме auto не открываю: там хуки и MCP из PR сработали бы без вопросов. Ревью здесь: /pr-review ${number} — мод спросит перед переключением дерева`); continue }
-    const command = `cd ${shellQuote(tree.path)} && claude --permission-mode auto ${shellQuote(`/pr-review ${number}`)}`
+    if (tree.executable.length) { lines.push(`PR ${number} меняет настройки Claude Code (${tree.executable.join(', ')}) — вкладку с новой сессией не открываю: там хуки и MCP из PR сработали бы. Ревью здесь: /pr-review ${number} — мод спросит перед переключением дерева`); continue }
+    const auto = tree.instructions.length === 0
+    const command = `cd ${shellQuote(tree.path)} && claude ${auto ? '--permission-mode auto ' : ''}${shellQuote(`/pr-review ${number}`)}`
     const opened = await $.process.run([orca, 'terminal', 'create', '--worktree', `path:${root}`, '--title', `review #${number}`, '--focus', '--json', '--command', command]).then(result => result.exitCode === 0, () => false)
-    if (opened) lines.push(`PR ${number}: вкладка открыта (${tree.created ? 'новый' : 'прежний'} worktree ${tree.path})`)
+    if (opened) lines.push(`PR ${number}: вкладка открыта (${tree.created ? 'новый' : 'прежний'} worktree ${tree.path})${auto ? '' : ` без режима auto: PR меняет инструкции агенту (${tree.instructions.join(', ')}) — каждая команда спросит разрешение`}`)
     else here.push(number)
   }
   if (here.length) {
@@ -896,7 +902,7 @@ const TOOL_SPECS = [
   },
   {
     name: 'review_tab',
-    description: 'Open a review of each named PR in its own git worktree and Orca tab (/pr-review N runs there). Without Orca the first review starts in this tree. A PR that changes Claude Code settings (.claude/, .mcp.json, CLAUDE.md…) gets no tab. Answers one line per PR.',
+    description: 'Open a review of each named PR in its own git worktree and Orca tab (/pr-review N runs there). Without Orca the first review starts in this tree. A PR that changes Claude Code settings, hooks or MCP (.claude/settings*.json, .claude/hooks|agents|commands|skills/, scripts in .claude/, .mcp.json, .claude-plugin/) gets no tab; one that changes only agent instructions (CLAUDE.md, AGENTS.md, .claude/rules/) gets a tab without auto mode. Answers one line per PR.',
     inputSchema: { type: 'object', properties: { prs: { type: 'array', items: { type: 'number' } } }, required: ['prs'] },
     isDeferred: false,
   },

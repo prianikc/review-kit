@@ -54,15 +54,32 @@ export async function snapshot(run: Run, { paths, indexFile }: { paths: string[]
   return (await gitText(run, ['commit-tree', tree, '-p', 'HEAD', '-m', 'review-kit snapshot'])).trim()
 }
 
-export const CLAUDE_CODE_PATHS: readonly string[] = ['.claude/', '.claude-plugin/', '.mcp.json', 'CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md']
+const CLAUDE_DIR = '.claude'
+const EXECUTABLE_NAMES = ['.mcp.json']
+const EXECUTABLE_IN_CLAUDE = ['settings.json', 'settings.local.json']
+const EXECUTABLE_DIRS = ['hooks', 'agents', 'commands', 'skills']
+const SCRIPT = /\.(sh|bash|js|mjs|cjs|ts|py)$/
+const INSTRUCTION_NAMES = ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md']
 
-export function claudeCodeChanges(changed: string[]): string[] {
-  const dirs = CLAUDE_CODE_PATHS.filter(item => item.endsWith('/')).map(item => item.slice(0, -1))
-  const names = CLAUDE_CODE_PATHS.filter(item => !item.endsWith('/'))
-  return changed.filter(path => {
-    const parts = path.split('/')
-    return parts.slice(0, -1).some(part => dirs.includes(part)) || names.includes(parts[parts.length - 1])
-  })
+function claudeKind(path: string): 'executable' | 'instructions' | null {
+  const parts = path.split('/')
+  const name = parts[parts.length - 1]
+  if (parts.slice(0, -1).includes('.claude-plugin') || EXECUTABLE_NAMES.includes(name)) return 'executable'
+  if (INSTRUCTION_NAMES.includes(name)) return 'instructions'
+  const at = parts.lastIndexOf(CLAUDE_DIR, parts.length - 2)
+  if (at < 0) return null
+  const inside = parts.slice(at + 1)
+  if (inside[0] === 'rules' && inside.length > 1) return 'instructions'
+  if (inside.length === 1 ? EXECUTABLE_IN_CLAUDE.includes(name) || SCRIPT.test(name) : EXECUTABLE_DIRS.includes(inside[0]) || SCRIPT.test(name)) return 'executable'
+  return null
+}
+
+export function claudeCodeChanges(changed: string[]): { executable: string[]; instructions: string[] } {
+  return { executable: changed.filter(path => claudeKind(path) === 'executable'), instructions: changed.filter(path => claudeKind(path) === 'instructions') }
+}
+
+export function reviewed(paths: string[]): string[] {
+  return paths.filter(path => !path.split('/').slice(0, -1).includes(CLAUDE_DIR))
 }
 
 export interface SwitchInput {
@@ -372,11 +389,11 @@ async function prBase(run: Run, baseRef: string, target: string): Promise<string
   throw new Error(`базу PR не найти (нет ни origin/${baseRef}, ни origin/main) — настройки Claude Code не проверить, вкладку не открываю`)
 }
 
-export async function createReviewWorktree(run: Run, input: { root: string; number: number; headRef: string; headSha: string; baseRef: string; pullRef: string; isActive: IsActive }): Promise<{ path: string; created: boolean; risky: string[] }> {
+export async function createReviewWorktree(run: Run, input: { root: string; number: number; headRef: string; headSha: string; baseRef: string; pullRef: string; isActive: IsActive }): Promise<{ path: string; created: boolean; executable: string[]; instructions: string[] }> {
   const path = worktreeName(input.root, input.number, input.headRef)
   const { target } = await fetchHead(run, { ...input, own: false })
-  const risky = claudeCodeChanges(await changedFiles(run, await prBase(run, input.baseRef, target), target))
-  if (risky.length) return { path, created: false, risky }
+  const { executable, instructions } = claudeCodeChanges(await changedFiles(run, await prBase(run, input.baseRef, target), target))
+  if (executable.length) return { path, created: false, executable, instructions }
   const exists = (await worktrees(run)).some(tree => tree.path === path)
   if (!exists) await gitText(run, ['worktree', 'add', '-q', '--detach', path, target])
   else {
@@ -385,7 +402,7 @@ export async function createReviewWorktree(run: Run, input: { root: string; numb
     await gitText(run, ['-C', path, 'switch', '-q', '--detach', target])
   }
   await gitText(run, ['-C', path, 'submodule', 'update', '--init', '-q'])
-  return { path, created: !exists, risky }
+  return { path, created: !exists, executable, instructions }
 }
 
 export async function excludeFile(run: Run): Promise<string> {
