@@ -7,6 +7,7 @@ import { ACTIONABLE, contextOf, OPEN_ALL, placeAll, prMenu, pullRows, splitHere,
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, readRules, type TriageItem } from './run/input.ts'
 import { collectFindings, finishTriage, type Finding, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
 import { applySwitch, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitRound, deleteBranches, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
+import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, parseMessage, reconcile } from './plannotator.ts'
 import { buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, type Texts } from './run/review.ts'
 
@@ -39,6 +40,7 @@ const SCENARIO_TEXT = {
 const GUARD_FAILED = 'review-kit: guard failed — действие отклонено'
 const ORCA_DEFAULT = 'orca.exe'
 const WORKTREES_EXCLUDE = '/.claude/worktrees/'
+const TABS_FILE = '.claude/worktrees/orca-tabs.json'
 const STATUS_ARGV = ['git', 'status', '--porcelain', '-uno', '--ignore-submodules=all']
 const SUBMIT_ATTEMPTS = 5
 const SESSION_POLLS = 20
@@ -61,7 +63,7 @@ async function activeRun($: EngineInterface): Promise<number | undefined> {
 }
 
 async function projectRoot($: EngineInterface): Promise<string> {
-  const { stdout } = await $.process.run(['git', 'rev-parse', '--show-toplevel'])
+  const { stdout } = await runner($)(['git', 'rev-parse', '--show-toplevel'])
   return stdout.trim()
 }
 
@@ -93,7 +95,7 @@ async function openRun($: EngineInterface, { pr, context, head, scenario }: { pr
 }
 
 async function deleteRunDir($: EngineInterface, pr: number): Promise<void> {
-  if (Number.isInteger(pr) && pr > 0) await $.process.run(['rm', '-rf', await runDir($, pr)])
+  if (Number.isInteger(pr) && pr > 0) await runner($)(['rm', '-rf', await runDir($, pr)])
 }
 
 async function foreignRun($: EngineInterface, pr: number): Promise<boolean> {
@@ -158,7 +160,7 @@ async function readTokens($: EngineInterface): Promise<Map<string, string | unde
 }
 
 async function forge($: EngineInterface): Promise<ForgeProvider> {
-  const remote = await $.process.run(['git', 'remote', 'get-url', 'origin'])
+  const remote = await runner($)(['git', 'remote', 'get-url', 'origin'])
   const values = await readTokens($)
   const missing = ADAPTERS.flatMap(adapter => adapter.tokenEnv).filter(name => !values.has(name))
   if (missing.length) throw new Error(`review-kit: мод не читает переменные ${missing.join(', ')} — добавьте их в readTokens`)
@@ -176,7 +178,7 @@ async function resumeRun($: EngineInterface, pr: number, handoff: Handoff): Prom
   const text = await $.fs.read(`${dir}/context.json`).then(String, () => '')
   const saved = parseSaved(text)
   if (!saved?.head) return `Прогон PR ${pr} повреждён — выберите «Очистить».`
-  const head = (await $.process.run(['git', 'rev-parse', 'HEAD'])).stdout.trim()
+  const head = (await runner($)(['git', 'rev-parse', 'HEAD'])).stdout.trim()
   const shift = await headShift(runner($), { saved: saved.head, head, branch: saved.headRef ?? '' })
   if (shift === 'moved') {
     const question = `Дерево сдвинуто после прерванного прогона PR ${pr}: ${head.slice(0, 7)} вместо ${saved.head.slice(0, 7)}, и этого коммита нет на origin.`
@@ -231,14 +233,14 @@ interface SavedStash {
 }
 
 async function stashTop($: EngineInterface): Promise<string> {
-  return (await $.process.run(['git', 'rev-parse', '-q', '--verify', 'refs/stash'])).stdout.trim()
+  return (await runner($)(['git', 'rev-parse', '-q', '--verify', 'refs/stash'])).stdout.trim()
 }
 
 async function stashOrCancel($: EngineInterface, pr: number): Promise<SavedStash | 'cancel'> {
   const answer = await $.ui.ask(`В дереве есть незакоммиченные изменения. Ревью PR ${pr} переключит ветку.`, ['Убрать в stash', 'Отменить']).catch(() => undefined)
   if (answer !== 'Убрать в stash') return 'cancel'
 
-  const now = (await $.process.run(['date', '+%Y-%m-%d %H:%M:%S'])).stdout.trim()
+  const now = (await runner($)(['date', '+%Y-%m-%d %H:%M:%S'])).stdout.trim()
   const name = `review-kit: pr-${pr} ${now}`
   const before = await stashTop($)
   await gitText(runner($), ['stash', 'push', '-m', name])
@@ -286,8 +288,9 @@ async function offerWorktrees($: EngineInterface, { worktrees }: { worktrees: Re
   const result = await removeWorktrees(run, worktrees.map(w => w.path), { confirmed: false, isActive: isActive($) })
   const branches = worktrees.filter(w => w.deleteBranch && result.removed.includes(w.path)).map(w => w.branch)
   const deleted = branches.length ? (await deleteBranches(run, branches)).deleted : []
+  const tabs = await closeTabs($, result.removed).catch(() => 0)
   const skipped = result.skipped.length ? `, пропущено: ${result.skipped.map(s => `${s.path.split('/').pop()} (${s.reason})`).join(', ')}` : ''
-  return `удалено worktree: ${result.removed.length}${deleted.length ? `, их веток: ${deleted.length}` : ''}${skipped}`
+  return `удалено worktree: ${result.removed.length}${deleted.length ? `, их веток: ${deleted.length}` : ''}${tabs ? `, закрыто вкладок Orca: ${tabs}` : ''}${skipped}`
 }
 
 async function releaseWorktree($: EngineInterface, { pr, headRef }: { pr: number; headRef: string }): Promise<string | undefined> {
@@ -304,6 +307,7 @@ async function releaseWorktree($: EngineInterface, { pr, headRef }: { pr: number
   if (answer !== CLEAR) return 'Отменено: дерево не тронуто.'
 
   const result = await removeWorktrees(runner($), [held.path], { confirmed: true, isActive: isActive($) })
+  await closeTabs($, result.removed).catch(() => 0)
   return result.removed.length ? undefined : `review-kit: worktree ${held.path} не удалён — ${result.skipped[0]?.reason ?? 'причина неизвестна'}. PR ${pr} не начат.`
 }
 
@@ -336,8 +340,8 @@ async function offerCleanup($: EngineInterface, { minBranches }: { minBranches: 
   }
 
   for (const stash of stashes) {
-    const branch = (await $.process.run(['git', 'branch', '--show-current'])).stdout.trim()
-    const clean = (await $.process.run(STATUS_ARGV)).stdout.trim() === ''
+    const branch = (await runner($)(['git', 'branch', '--show-current'])).stdout.trim()
+    const clean = (await runner($)(STATUS_ARGV)).stdout.trim() === ''
     const canApply = clean && stash.branch !== '' && branch === stash.branch
     const hint = canApply || !stash.branch ? '' : ` — чтобы применить, переключитесь на ${stash.branch}${clean ? '' : ' и уберите изменения'}`
     const options = canApply ? [KEEP, 'Применить', 'Удалить'] : [KEEP, 'Удалить']
@@ -465,7 +469,7 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
     }
   }
 
-  const dirty = (await $.process.run(STATUS_ARGV)).stdout.trim()
+  const dirty = (await runner($)(STATUS_ARGV)).stdout.trim()
   const saved = dirty ? await stashOrCancel($, pr) : null
   if (saved === 'cancel') return 'Отменено: дерево не тронуто.'
   const stash = saved?.name ?? null
@@ -479,10 +483,10 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
   if (scenario === 'recheck') {
     const prior = priorComments(loaded.data)
     if (!prior) throw new Error(`моего ревью в PR ${pr} нет — перепроверять нечего; дерево на коммите PR${stash ? `, ваши изменения в stash «${stash}» — вернуть: /pr cleanup` : ''}`)
-    const base = await recheckBase(argv => $.process.run(argv), { lastCommit: prior.review.commitSha, head: switched.head, baseRef: context.baseRef })
+    const base = await recheckBase(runner($), { lastCommit: prior.review.commitSha, head: switched.head, baseRef: context.baseRef })
     await $.fs.write(`${dir}/recheck.json`, JSON.stringify({ ...base, reviewId: prior.review.id, prior: prior.prior }, null, 2))
   }
-  const plannotator = await $.process.run(['plannotator', '--version']).then(result => result.exitCode === 0, () => false)
+  const plannotator = await runner($)(['plannotator', '--version']).then(result => result.exitCode === 0, () => false)
   await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, model, scenario, plannotator }))
   await openRun($, { pr, context, head: switched.head, scenario })
   const next = handOff($, pr, handoff, scenario)
@@ -500,7 +504,7 @@ type WorkflowId = 'funnel' | 'delta' | 'statuses' | 'triage' | 'fix-check'
 interface WorkflowSpec { id: WorkflowId; scriptPath: string; args: Record<string, unknown> }
 
 function runner($: EngineInterface): Run {
-  return (argv, init) => $.process.run(argv, init)
+  return async (argv, init) => $.process.run(argv, { cwd: await $.session.root(), ...init })
 }
 
 async function runContext($: EngineInterface, pr: number): Promise<{ dir: string; context: { head: string; base: string; model: string } }> {
@@ -520,7 +524,7 @@ async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; i
     ...(!w.items && rules.size === 0 ? [B_SKIPPED] : []),
     ...(w.foreign && changedRules.length ? [`PR меняет правила агентов: ${changedRules.join(', ')} — ревью шло по правилам базы`] : []),
   ]
-  await $.process.run(['rm', '-rf', out])
+  await runner($)(['rm', '-rf', out])
   await Promise.all([...rules].map(([path, text]) => $.fs.write(`${out}/rules/${path}`, text)))
   await $.fs.write(`${out}/rules.json`, JSON.stringify(Object.fromEntries(rules)))
   await $.fs.write(`${out}/range.json`, JSON.stringify({ base, head }))
@@ -560,7 +564,7 @@ async function prepare($: EngineInterface, pr: number, kind: PrepareKind, paths:
 }
 
 async function workflowNotes($: EngineInterface, out: string): Promise<{ manifestNotes: string[]; gateRows: GateRow[] }> {
-  const names = (await $.process.run(['ls', '-1', out])).stdout.split('\n').filter(Boolean)
+  const names = (await runner($)(['ls', '-1', out])).stdout.split('\n').filter(Boolean)
   const read = (name: string) => $.fs.read(`${out}/${name}`).then(String, () => '')
   const manifests = await Promise.all(names.filter(name => /^manifest-.*\.txt$/.test(name)).sort().map(read))
   const gates = await Promise.all(names.filter(name => /^gate-.*\.jsonl$/.test(name)).sort().map(read))
@@ -697,9 +701,36 @@ async function commitPush($: EngineInterface, { pr, message, paths }: { pr: numb
     : `not pushed: push не прошёл (коммит раунда сохранён, повтор commit_push только запушит): ${pushed.output}`
 }
 
+async function mainRoot($: EngineInterface): Promise<string> {
+  return (await gitText(runner($), ['worktree', 'list', '--porcelain'])).split('\n')[0].slice('worktree '.length)
+}
+
+async function rememberTab($: EngineInterface, root: string, path: string, handle: string): Promise<void> {
+  const file = `${root}/${TABS_FILE}`
+  const tabs = await readJson<Record<string, string[]>>($, file, {})
+  await $.fs.write(file, JSON.stringify({ ...tabs, [path]: [...new Set([...(tabs[path] ?? []), handle])] }, null, 2))
+}
+
+async function closeTabs($: EngineInterface, paths: string[]): Promise<number> {
+  const orca = paths.length ? await orcaBin($) : undefined
+  if (!orca) return 0
+  const file = `${await mainRoot($)}/${TABS_FILE}`
+  const tabs = await readJson<Record<string, string[]>>($, file, {})
+  const list = (await runner($)([orca, 'terminal', 'list', '--json']).catch(() => undefined))?.stdout ?? ''
+  let closed = 0
+  for (const path of paths) {
+    for (const handle of new Set([...(tabs[path] ?? []), ...previewHandles(list, path)])) {
+      if ((await runner($)([orca, 'terminal', 'close', '--terminal', handle, '--tab', '--json']).catch(() => undefined))?.exitCode === 0) closed++
+    }
+    delete tabs[path]
+  }
+  await $.fs.write(file, JSON.stringify(tabs, null, 2)).catch(() => undefined)
+  return closed
+}
+
 async function orcaBin($: EngineInterface): Promise<string | undefined> {
   const orca = (await $.env.get('ORCA_BIN')) ?? ORCA_DEFAULT
-  return (await $.process.run([orca, '--version']).then(result => result.exitCode === 0, () => false)) ? orca : undefined
+  return (await runner($)([orca, '--version']).then(result => result.exitCode === 0, () => false)) ? orca : undefined
 }
 
 async function reviewTabs($: EngineInterface, prs: number[]): Promise<string> {
@@ -755,7 +786,10 @@ async function openTabs($: EngineInterface, prs: number[], { orca, command: slas
     if (tree.executable.length) { lines.push(`PR ${number} меняет настройки Claude Code (${tree.executable.join(', ')}) — вкладку с новой сессией не открываю: там хуки и MCP из PR сработали бы. Здесь: ${slash} ${number} — мод спросит перед переключением дерева`); continue }
     const auto = tree.instructions.length === 0
     const command = `cd ${shellQuote(tree.path)} && claude ${auto ? '--permission-mode auto ' : ''}${shellQuote(`${slash} ${number}`)}`
-    const opened = await $.process.run([orca, 'terminal', 'create', '--worktree', `path:${root}`, '--title', `${title(number)} #${number}`, '--focus', '--json', '--command', command]).then(result => result.exitCode === 0, () => false)
+    const created = await runner($)([orca, 'terminal', 'create', '--worktree', `path:${root}`, '--title', `${title(number)} #${number}`, '--focus', '--json', '--command', command]).catch(() => undefined)
+    const opened = created?.exitCode === 0
+    const handle = opened ? createdHandle(created.stdout) : undefined
+    if (handle) await rememberTab($, root, tree.path, handle).catch(() => undefined)
     if (opened) lines.push(`PR ${number}: вкладка открыта (${tree.created ? 'новый' : 'прежний'} worktree ${tree.path})${auto ? '' : ` без режима auto: PR меняет инструкции агенту (${tree.instructions.join(', ')}) — каждая команда спросит разрешение`}`)
     else here.push(number)
   }
@@ -767,7 +801,7 @@ function sessionProject(root: string): string {
 }
 
 async function sessionUrls($: EngineInterface, project: string): Promise<string[]> {
-  const { stdout, stderr } = await $.process.run(['plannotator', 'sessions'])
+  const { stdout, stderr } = await runner($)(['plannotator', 'sessions'])
   return `${stdout}\n${stderr}`.split('\n').map(line => line.trim().split(/\s+/)).filter(cols => cols[1] === 'review' && cols[2] === project).map(cols => cols[3])
 }
 
@@ -846,6 +880,16 @@ async function reviewAnnotations($: EngineInterface, dir: string): Promise<strin
   const texts = JSON.parse(String(await $.fs.read(`${dir}/texts.json`))) as Texts
   await $.fs.write(`${dir}/plannotator/items.json`, JSON.stringify(findings, null, 2))
   return JSON.stringify(annotations(findings, texts))
+}
+
+async function viewFindings($: EngineInterface): Promise<string> {
+  const run = await runFacts($)
+  if (run?.pr === undefined || run.status !== 'active') return 'Идущего ревью нет — находки показываются только внутри прогона: /pr-review <номер>.'
+  if ((run.scenario ?? 'review') !== 'review' || run.isOwn || run.state === 'closed') return `Прогон PR ${run.pr} — не ревью чужого открытого PR: в Plannotator открывать нечего.`
+  const findings = (await readJson<{ findings: Finding[] }>($, `${await runDir($, run.pr)}/findings.json`, { findings: [] })).findings
+  if (findings.length === 0) return `В ревью PR ${run.pr} пока нет находок — открывать нечего.`
+  submitLater($, `Use the review-kit:pr-review-run skill for PR ${run.pr}: the user typed /pr-view — go straight to section 3 «In Plannotator».`, SUBMIT_ATTEMPTS)
+  return `Открываю находки PR ${run.pr} в Plannotator.`
 }
 
 async function startPlannotator($: EngineInterface, pr: number, mode: PlannotatorMode = 'review'): Promise<string> {
@@ -956,6 +1000,7 @@ const COMMAND_SPECS = [
   { name: 'pr-recheck', description: 'Перепроверить правки в чужом PR после моего ревью', argumentHint: '<номер PR> | stop' },
   { name: 'pr-feedback', description: 'Разобрать замечания к своему PR', argumentHint: '<номер PR> | stop' },
   { name: 'pr-fix', description: 'Раунд правок своего PR', argumentHint: '<номер PR> | stop' },
+  { name: 'pr-view', description: 'Открыть находки идущего ревью в Plannotator' },
 ]
 
 export const register: Register = (on, options) => {
@@ -1024,6 +1069,14 @@ export const register: Register = (on, options) => {
 
     try {
       return { text: await startReview($, pr, { loaded: await prContext($, pr), handoff: 'submit' }) }
+    } catch (error) {
+      return { text: `review-kit: ${(error as Error).message}` }
+    }
+  })
+
+  on('command.run', { command: 'pr-view' }, async $ => {
+    try {
+      return { text: await viewFindings($) }
     } catch (error) {
       return { text: `review-kit: ${(error as Error).message}` }
     }

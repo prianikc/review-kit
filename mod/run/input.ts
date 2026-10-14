@@ -1,6 +1,7 @@
 import { binaryFiles, changedFiles, fileDiff, reviewed, showFile, treeEntries, type Run } from '../git.ts'
 
 export const MAX_FILE_CHARS = 60_000
+export const DELETED = 'удалён'
 export const MAX_INPUT_CHARS = 250_000
 export const B_SKIPPED = 'агент B не запускался: для его работы нужны правила и соглашения проекта (CLAUDE.md, AGENTS.md, .claude/rules, .cursor/rules, .github/copilot-instructions.md)'
 const RULE_NAMES = ['CLAUDE.md', 'AGENTS.md']
@@ -52,7 +53,7 @@ export async function fileStates(run: Run, base: string, head: string, paths?: s
   const states = new Map<string, FileState>()
   for (const path of changed) {
     const type = types.get(path)
-    if (type === undefined) states.set(path, { text: null, reason: 'удалён' })
+    if (type === undefined) states.set(path, { text: null, reason: DELETED })
     else if (type === 'commit') states.set(path, { text: null, reason: 'сабмодуль' })
     else if (binary.has(path)) states.set(path, { text: null, reason: 'бинарный' })
     else {

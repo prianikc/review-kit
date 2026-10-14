@@ -18,11 +18,12 @@
 |---|---|
 | `.claude-plugin/` | `plugin.json` (манифест, версия, `userConfig` — галочка системы) и `marketplace.json` |
 | `hooks/hooks.json` | подключает мод: `{"modules": ["../mod/register.ts"]}` |
-| `mod/register.ts` | команды `/pr` (с `all` — все PR с делом во вкладках), `/pr-review`, `/pr-feedback`, `/pr-fix`, `/pr-recheck`; инструменты `review_start`, `review_prepare`, `review_collect`, `review_publish`, `replies_publish`, `commit_push`, `review_plannotator`, `review_tab`, `review_finish`; хуки и состояние прогона, окно ручного `/commit` и файлы сессии |
+| `mod/register.ts` | команды `/pr` (с `all` — все PR с делом во вкладках), `/pr-review`, `/pr-feedback`, `/pr-fix`, `/pr-recheck`, `/pr-view`; инструменты `review_start`, `review_prepare`, `review_collect`, `review_publish`, `replies_publish`, `commit_push`, `review_plannotator`, `review_tab`, `review_finish`; хуки и состояние прогона, окно ручного `/commit` и файлы сессии |
 | `mod/forge/` | общая модель хостинга (`types.ts`), выбор адаптера и токена (`index.ts`), адаптер Forgejo/Gitea (`forgejo.ts`), фейковый провайдер для тестов |
 | `mod/status.ts` | сценарий и статус PR, intake замечаний, прошлые замечания для перепроверки |
 | `mod/run/` | вход агентам и поиск правил (`input.ts`), сбор находок и триажа (`findings.ts`), тело ревью и ответы (`review.ts`) |
 | `mod/git.ts` | переключение на PR, снимок раунда, commit+push, уборка, worktree для `pr-tab` |
+| `mod/orca.ts` | разбор ответов Orca: handle созданной вкладки, вкладки worktree по превью — для закрытия при уборке |
 | `mod/plannotator.ts` | аннотации находок и разбор решения Plannotator |
 | `mod/policy.ts` | во время прогона запрещает сырые `git commit`/`push`/`pull`/`rebase`, `--force`, `--amend`, curl/wget-запись |
 | `mod/gate.ts` | gate чтения: агент не вернёт ответ, пока не прочитал целиком файлы своего манифеста |

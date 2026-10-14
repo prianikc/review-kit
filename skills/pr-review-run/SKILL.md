@@ -42,7 +42,8 @@ end with «Апрувим?».
 No findings and the user approves → `review_publish` with `pr`, `ids: []`, `approve: true` (the mod asks «Одобрить PR <N>
 без комментариев?» itself) → section 4.
 
-Otherwise AskUserQuestion «Где разбираем тексты ревью?» — «В чате», «В Plannotator».
+Otherwise AskUserQuestion «Где разбираем тексты ревью?» — «В чате», «В Plannotator». A prompt saying the user typed `/pr-view`
+skips the question → «In Plannotator».
 
 ### In chat
 
@@ -60,7 +61,8 @@ Otherwise AskUserQuestion «Где разбираем тексты ревью?»
    `review_finish`, stop.
 3. `started: …` → tell the user the URL, and that a rewritten comment must keep its first line `[id · …]`. End the turn and
    do nothing until a message «Plannotator result for PR <N>: …» arrives.
-4. On it: `failed` → as step 2 `unavailable`. Read `.review-kit/run/<N>/plannotator/result.json`:
+4. On it: `failed` → as step 2 `unavailable`. Read `.review-kit/run/<N>/plannotator/result.json` with Read (never `cd` into the
+   run folder: `review_finish` deletes it):
    - `dismissed` → «Ревью не публикуется: Plannotator закрыт без решения» → `review_finish`, stop;
    - empty `ids` and an empty `summary` in `plannotator/texts.json` → «Публиковать нечего» → `review_finish`, stop;
    - otherwise show the summary and every comment of `plannotator/texts.json` (`h…` ids are the human's own; edits the user

@@ -86,3 +86,20 @@ test('finishTriage: класс, fixed только у valid, пропуски', 
   ])
   assert.equal(finishTriage({ result: { items: [] } }, [{ id: 'x' }], 'recheck')[0].class, 'unknown')
 })
+
+test('«Не проверялось»: удалённый в PR файл не попадает, строка агента о файле, про который сказал мод, — одна', () => {
+  const skipped = new Map([['src/gone.ts', 'удалён'], ['big.txt', 'больше 60000 символов']])
+  const notChecked = ['src/gone.ts', 'big.txt (не приложен: больше 60000 символов)', 'src/a.ts — не смог проверить вызовы']
+  const result = collectFindings({ ...base, skipped, raw: raw([], [], { notChecked }) })
+  assert.deepEqual(result.notChecked, ['src/a.ts — не смог проверить вызовы', 'big.txt — не приложен: больше 60000 символов'])
+})
+
+test('нарушение правила проекта: C не опускает important ниже important, поднять может', () => {
+  const ruled = finding({ id: 'B-1', role: 'quality', failureScenario: undefined, rule: { file: 'CLAUDE.md', quote: RULE } })
+  const lowered = collectFindings({ ...base, raw: raw([ruled], [{ id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — так', severity: 'minor', confidence: 90 }]) })
+  assert.equal(lowered.findings[0].severity, 'important')
+  const raised = collectFindings({ ...base, raw: raw([ruled], [{ id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — так', severity: 'critical', confidence: 90 }]) })
+  assert.equal(raised.findings[0].severity, 'critical')
+  const styleMinor = collectFindings({ ...base, raw: raw([{ ...ruled, severity: 'minor' }], [{ id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — так', severity: 'minor', confidence: 90 }]) })
+  assert.equal(styleMinor.belowBar.concat(styleMinor.findings)[0]?.severity ?? 'minor', 'minor')
+})

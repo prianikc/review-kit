@@ -1,3 +1,5 @@
+import { DELETED } from './input.ts'
+
 const VERDICTS = ['refuted', 'confirmed', 'cannot-refute']
 const GATE_FAILURES = ['exhausted', 'stopped', 'hook-error', 'no-manifest']
 const EVIDENCE = /(?:^|[\s(`"'])([\p{L}\p{N}_./@-]+):(\d+)(?:-\d+)?/u
@@ -85,7 +87,9 @@ function verdictOf(item: Finding, verdict: Record<string, unknown> | undefined):
   const evidence = typeof verdict.evidence === 'string' ? verdict.evidence : ''
   if (name === 'refuted') return evidenceLine(evidence, item.file) !== null ? { ...item, verdict: 'refuted', evidence } : { ...item, verdict: 'cannot-refute' }
   if (name === 'confirmed') {
-    return { ...item, verdict: 'confirmed', severity: (verdict.severity as Severity) ?? item.severity, confidence: (verdict.confidence as number) ?? item.confidence, ...(evidence ? { evidence } : {}) }
+    const severity = (verdict.severity as Severity) ?? item.severity
+    const ruleFloor = item.rule && SEVERITY_RANK[item.severity] >= SEVERITY_RANK.important && SEVERITY_RANK[severity] < SEVERITY_RANK.important
+    return { ...item, verdict: 'confirmed', severity: ruleFloor ? 'important' : severity, confidence: (verdict.confidence as number) ?? item.confidence, ...(evidence ? { evidence } : {}) }
   }
   return { ...item, verdict: 'cannot-refute' }
 }
@@ -214,9 +218,10 @@ export function collectFindings(input: { raw: unknown; changed: string[]; lineCo
   const floor = input.minSeverity ? SEVERITY_RANK[input.minSeverity] : 0
   const findings = folded.filter(item => SEVERITY_RANK[item.severity] >= floor)
   const minDropped = folded.filter(item => SEVERITY_RANK[item.severity] < floor).map(item => ({ id: item.id, reason: `below-${input.minSeverity}` }))
+  const skipped = [...input.skipped.keys()]
   const notes = [
-    ...raw.notChecked,
-    ...[...input.skipped].map(([path, why]) => `${path} — не приложен: ${why}`),
+    ...raw.notChecked.filter(note => !skipped.some(path => note === path || note.startsWith(`${path} `))),
+    ...[...input.skipped].filter(([, why]) => why !== DELETED).map(([path, why]) => `${path} — не приложен: ${why}`),
     ...input.manifestNotes,
     ...gateNotes(input.gateRows),
     ...raw.failed.map(role => `агент ${role} не ответил — угол ${role} не проверен`),

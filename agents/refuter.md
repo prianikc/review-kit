@@ -19,7 +19,8 @@ a rule you actually read.
      as `cannot-refute`;
    - `refuted` — the finding is wrong at that line;
    - `confirmed` — the defect is at that line; give your own `severity` (critical | important | minor) and
-     `confidence` (0–100);
+     `confidence` (0–100). A finding with `rule` rated `important` stays at least `important`: a project-rule
+     violation a reviewer would send back is never `minor`;
    - `cannot-refute` — you could not check it.
    - `duplicateOf` — the id of a finding in the same group that states the same defect.
 4. Answer only through the structured output.
