@@ -2,6 +2,7 @@ import type { Comment, ForgeProvider, PullRequest, Review, Thread } from './forg
 
 export const MARKER = '<!-- review-kit -->'
 export const ACTIONABLE: readonly Scenario[] = ['feedback', 'review', 'recheck']
+export const OPEN_ALL = 'Открыть все'
 
 export type Scenario = 'closed' | 'feedback' | 'none-own' | 'review' | 'recheck' | 'wait-author'
 
@@ -59,6 +60,7 @@ export interface ListRow {
   title: string
   author: string
   isOwn: boolean
+  headRef: string
   scenario: Scenario
   status: Status
 }
@@ -196,10 +198,24 @@ export async function pullRows(provider: ForgeProvider): Promise<{ rows: ListRow
     const batch = await Promise.all(pulls.slice(at, at + PULL_CONCURRENCY).map(async pull => {
       const data = await loadPr(provider, pull.number, pull)
       const scenario = scenarioOf(data)
-      return { number: pull.number, title: pull.title, author: pull.author, isOwn: same(pull.author, data.me), scenario, status: statusOf(data, scenario) }
+      return { number: pull.number, title: pull.title, author: pull.author, isOwn: same(pull.author, data.me), headRef: pull.headRef, scenario, status: statusOf(data, scenario) }
     }))
     rows.push(...batch)
   }
   const rank = (row: ListRow) => (ACTIONABLE.includes(row.scenario) ? 0 : 1)
   return { rows: rows.sort((a, b) => rank(a) - rank(b) || Number(b.isOwn) - Number(a.isOwn) || a.number - b.number), truncated: pulls.length >= PULL_LIMIT }
+}
+
+export function prMenu(labels: readonly string[], max: number): string[] | undefined {
+  if (labels.length === 1) return [...labels]
+  return labels.length + 1 <= max ? [...labels, `${OPEN_ALL} (${labels.length})`] : undefined
+}
+
+export function placeAll(rows: ReadonlyArray<{ number: number; isOwn: boolean; headRef: string }>, { mainBranch, hasOrca }: { mainBranch: string; hasOrca: boolean }): { tabs: number[]; here: number[] } {
+  const here = rows.filter(row => !hasOrca || (row.isOwn && row.headRef === mainBranch)).map(row => row.number)
+  return { tabs: rows.map(row => row.number).filter(number => !here.includes(number)), here }
+}
+
+export function splitHere(here: readonly number[], running: boolean): { start: number | undefined; later: number[] } {
+  return running ? { start: undefined, later: [...here] } : { start: here[0], later: here.slice(1) }
 }

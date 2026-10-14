@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ACTIONABLE, contextOf, pullRows, statusOf, intakeItems, loadPr, MARKER, priorComments, scenarioOf, type PrData } from './status.ts'
+import { ACTIONABLE, contextOf, OPEN_ALL, placeAll, prMenu, pullRows, splitHere, statusOf, intakeItems, loadPr, MARKER, priorComments, scenarioOf, type PrData } from './status.ts'
 import { fakeProvider } from './forge/fake.ts'
 import type { Comment, PullRequest, Review, Thread } from './forge/types.ts'
 
@@ -150,4 +150,29 @@ test('pullRows: все открытые, с делом — первыми; ро�
   assert.equal(truncated, false)
   const many = fakeProvider({ me: 'alice', pulls: Array.from({ length: 50 }, (_, i) => pull({ number: i + 1 })) })
   assert.equal((await pullRows(many)).truncated, true)
+})
+
+test('prMenu: один PR — без «все», 2–3 — «Открыть все (N)» последним, больше — текстом', () => {
+  assert.deepEqual(prMenu(['#1'], 4), ['#1'])
+  assert.deepEqual(prMenu(['#1', '#2'], 4), ['#1', '#2', `${OPEN_ALL} (2)`])
+  assert.deepEqual(prMenu(['#1', '#2', '#3'], 4), ['#1', '#2', '#3', `${OPEN_ALL} (3)`])
+  assert.equal(prMenu(['#1', '#2', '#3', '#4'], 4), undefined)
+})
+
+test('placeAll: свой PR на ветке основного дерева — здесь, остальное — во вкладки; без Orca — всё здесь', () => {
+  const rows = [
+    { number: 1, isOwn: false, headRef: 'feat-a' },
+    { number: 2, isOwn: true, headRef: 'my-fix' },
+    { number: 3, isOwn: true, headRef: 'my-other' },
+  ]
+  assert.deepEqual(placeAll(rows, { mainBranch: 'my-fix', hasOrca: true }), { tabs: [1, 3], here: [2] })
+  assert.deepEqual(placeAll(rows, { mainBranch: 'main', hasOrca: true }), { tabs: [1, 2, 3], here: [] })
+  assert.deepEqual(placeAll(rows, { mainBranch: 'feat-a', hasOrca: true }), { tabs: [1, 2, 3], here: [] })
+  assert.deepEqual(placeAll(rows, { mainBranch: 'my-fix', hasOrca: false }), { tabs: [], here: [1, 2, 3] })
+})
+
+test('splitHere: первый запускается здесь, если прогона нет; иначе все — потом', () => {
+  assert.deepEqual(splitHere([2, 5], false), { start: 2, later: [5] })
+  assert.deepEqual(splitHere([2, 5], true), { start: undefined, later: [2, 5] })
+  assert.deepEqual(splitHere([], false), { start: undefined, later: [] })
 })

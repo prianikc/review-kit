@@ -320,6 +320,10 @@ async function worktrees(run: Run): Promise<Array<{ path: string; branch: string
   return rows
 }
 
+export async function mainBranch(run: Run): Promise<string> {
+  return (await worktrees(run))[0]?.branch ?? ''
+}
+
 export async function inMainTree(run: Run): Promise<boolean> {
   const [main] = await worktrees(run)
   return (await gitText(run, ['rev-parse', '--show-toplevel'])).trim() === main?.path

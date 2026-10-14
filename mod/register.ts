@@ -3,10 +3,10 @@ import { addSessionFile, allowsManualCommit, classifyBash, guardText, isCommitCo
 import { manifestPaths, MAX_RETURNS, parseManifest, parseRole, unreadFiles, type GatedAgent } from './gate.ts'
 import { ADAPTERS, createProvider, selectProvider, withTimeout, type ExplicitConfig } from './forge/index.ts'
 import type { ForgeProvider } from './forge/types.ts'
-import { ACTIONABLE, contextOf, pullRows, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type ListRow, type PrContext, type PrData } from './status.ts'
+import { ACTIONABLE, contextOf, OPEN_ALL, placeAll, prMenu, pullRows, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type ListRow, type PrContext, type PrData } from './status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, readRules, type TriageItem } from './run/input.ts'
 import { collectFindings, finishTriage, type Finding, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
-import { applySwitch, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitRound, deleteBranches, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
+import { applySwitch, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitRound, deleteBranches, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
 import { annotations, decisionOf, fixResult, parseMessage, reconcile } from './plannotator.ts'
 import { buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, type Texts } from './run/review.ts'
 
@@ -393,9 +393,11 @@ async function routePr($: EngineInterface, pr: number | undefined, handoff: Hand
     const labels = actionable.map(line)
     const others = rows.filter(row => !actionable.includes(row))
     const rest = others.length ? `\nОстальные:\n${others.map(line).join('\n')}` : ''
-    if (actionable.length > MAX_DIALOG_OPTIONS) return `PR, по которым есть дело:\n${labels.join('\n')}${rest}\nВыберите: /pr <номер>${tail}`
+    const menu = prMenu(labels, MAX_DIALOG_OPTIONS)
+    if (!menu) return `PR, по которым есть дело:\n${labels.join('\n')}${rest}\nВыберите: /pr <номер>\nВсе сразу: /pr all${tail}`
 
-    const chosen = String(await $.ui.ask('Какой PR берём?', actionable.length === 1 ? [...labels, CANCEL] : labels).catch(() => ''))
+    const chosen = String(await $.ui.ask('Какой PR берём?', actionable.length === 1 ? [...menu, CANCEL] : menu).catch(() => ''))
+    if (chosen.startsWith(OPEN_ALL)) return openAll($)
     const row = actionable[labels.indexOf(chosen)]
     if (row) return routePr($, row.number, handoff)
 
@@ -695,19 +697,53 @@ async function commitPush($: EngineInterface, { pr, message, paths }: { pr: numb
     : `not pushed: push не прошёл (коммит раунда сохранён, повтор commit_push только запушит): ${pushed.output}`
 }
 
-async function openTabs($: EngineInterface, prs: number[]): Promise<string> {
+async function orcaBin($: EngineInterface): Promise<string | undefined> {
+  const orca = (await $.env.get('ORCA_BIN')) ?? ORCA_DEFAULT
+  return (await $.process.run([orca, '--version']).then(result => result.exitCode === 0, () => false)) ? orca : undefined
+}
+
+async function reviewTabs($: EngineInterface, prs: number[]): Promise<string> {
+  const orca = await orcaBin($)
+  if (!orca) {
+    submitLater($, `/pr-review ${prs[0]}`, SUBMIT_ATTEMPTS)
+    return `Orca не найдена — ревью PR ${prs[0]} запускаю в текущем дереве${prs.length > 1 ? `; остальные (${prs.slice(1).join(', ')}) — потом: /pr-review <номер>` : ''}`
+  }
+  const { lines, here } = await openTabs($, prs, { orca, command: '/pr-review', title: () => 'review' })
+  if (here.length) {
+    lines.push(`Вкладку Orca открыть не удалось — ревью PR ${here[0]} запускаю в текущем дереве${here.length > 1 ? `; остальные (${here.slice(1).join(', ')}) — потом: /pr-review <номер>` : ''}. Неиспользованные worktree уберёт /pr cleanup`)
+    submitLater($, `/pr-review ${here[0]}`, SUBMIT_ATTEMPTS)
+  }
+  return lines.join('\n')
+}
+
+async function openAll($: EngineInterface): Promise<string> {
+  const { rows, truncated } = await pullRows(await forge($))
+  const actionable = rows.filter(row => ACTIONABLE.includes(row.scenario))
+  if (actionable.length === 0) return 'PR, по которым есть дело, нет.'
+  const orca = await orcaBin($)
+  const { tabs, here } = placeAll(actionable, { mainBranch: await mainBranch(runner($)), hasOrca: orca !== undefined })
+  const scenario = (number: number) => actionable.find(row => row.number === number)?.scenario ?? 'review'
+  const opened = orca && tabs.length ? await openTabs($, tabs, { orca, command: '/pr', title: scenario }) : { lines: [], here: [] }
+  const lines = [...opened.lines]
+  const active = await activeRun($)
+  const { start, later } = splitHere([...here, ...opened.here], active !== undefined)
+  if (!orca) lines.push('Orca не найдена — вкладки не открываю, PR веду в текущем дереве по одному')
+  if (start !== undefined) {
+    lines.push(`PR ${start}: запускаю здесь`)
+    submitLater($, `/pr ${start}`, SUBMIT_ATTEMPTS)
+  }
+  if (later.length) lines.push(`${active !== undefined ? `Идёт прогон PR ${active} — здесь ничего не запускаю. ` : ''}Потом здесь: ${later.map(number => `/pr ${number}`).join(', ')}`)
+  if (truncated) lines.push('Прочитано 50 открытых PR — это предел одного запроса; остальные — /pr <номер>')
+  return lines.join('\n')
+}
+
+async function openTabs($: EngineInterface, prs: number[], { orca, command: slash, title }: { orca: string; command: string; title: (number: number) => string }): Promise<{ lines: string[]; here: number[] }> {
   const run = runner($)
   const provider = await forge($)
   const root = (await gitText(run, ['worktree', 'list', '--porcelain'])).split('\n')[0].slice('worktree '.length)
   const exclude = await excludeFile(run)
   const excluded = await $.fs.read(exclude).then(String, () => '')
   if (!excluded.split('\n').includes(WORKTREES_EXCLUDE)) await $.fs.write(exclude, `${excluded}${excluded && !excluded.endsWith('\n') ? '\n' : ''}${WORKTREES_EXCLUDE}\n`)
-  const orca = (await $.env.get('ORCA_BIN')) ?? ORCA_DEFAULT
-  const hasOrca = await $.process.run([orca, '--version']).then(result => result.exitCode === 0, () => false)
-  if (!hasOrca) {
-    submitLater($, `/pr-review ${prs[0]}`, SUBMIT_ATTEMPTS)
-    return `Orca не найдена — ревью PR ${prs[0]} запускаю в текущем дереве${prs.length > 1 ? `; остальные (${prs.slice(1).join(', ')}) — потом: /pr-review <номер>` : ''}`
-  }
   const lines: string[] = []
   const here: number[] = []
   for (const number of prs) {
@@ -716,18 +752,14 @@ async function openTabs($: EngineInterface, prs: number[]): Promise<string> {
     const tree = await createReviewWorktree(run, { root, number, headRef: pull.headRef, headSha: pull.headSha, baseRef: pull.baseRef, pullRef: provider.pullRef(number), isActive: isActive($) })
       .catch((error: Error) => ({ error: error.message }))
     if ('error' in tree) { lines.push(`PR ${number}: ${tree.error}`); continue }
-    if (tree.executable.length) { lines.push(`PR ${number} меняет настройки Claude Code (${tree.executable.join(', ')}) — вкладку с новой сессией не открываю: там хуки и MCP из PR сработали бы. Ревью здесь: /pr-review ${number} — мод спросит перед переключением дерева`); continue }
+    if (tree.executable.length) { lines.push(`PR ${number} меняет настройки Claude Code (${tree.executable.join(', ')}) — вкладку с новой сессией не открываю: там хуки и MCP из PR сработали бы. Здесь: ${slash} ${number} — мод спросит перед переключением дерева`); continue }
     const auto = tree.instructions.length === 0
-    const command = `cd ${shellQuote(tree.path)} && claude ${auto ? '--permission-mode auto ' : ''}${shellQuote(`/pr-review ${number}`)}`
-    const opened = await $.process.run([orca, 'terminal', 'create', '--worktree', `path:${root}`, '--title', `review #${number}`, '--focus', '--json', '--command', command]).then(result => result.exitCode === 0, () => false)
+    const command = `cd ${shellQuote(tree.path)} && claude ${auto ? '--permission-mode auto ' : ''}${shellQuote(`${slash} ${number}`)}`
+    const opened = await $.process.run([orca, 'terminal', 'create', '--worktree', `path:${root}`, '--title', `${title(number)} #${number}`, '--focus', '--json', '--command', command]).then(result => result.exitCode === 0, () => false)
     if (opened) lines.push(`PR ${number}: вкладка открыта (${tree.created ? 'новый' : 'прежний'} worktree ${tree.path})${auto ? '' : ` без режима auto: PR меняет инструкции агенту (${tree.instructions.join(', ')}) — каждая команда спросит разрешение`}`)
     else here.push(number)
   }
-  if (here.length) {
-    lines.push(`Вкладку Orca открыть не удалось — ревью PR ${here[0]} запускаю в текущем дереве${here.length > 1 ? `; остальные (${here.slice(1).join(', ')}) — потом: /pr-review <номер>` : ''}. Неиспользованные worktree уберёт /pr cleanup`)
-    submitLater($, `/pr-review ${here[0]}`, SUBMIT_ATTEMPTS)
-  }
-  return lines.join('\n')
+  return { lines, here }
 }
 
 function sessionProject(root: string): string {
@@ -920,7 +952,7 @@ const TOOL_SPECS = [
 
 const COMMAND_SPECS = [
   { name: 'pr-review', description: 'Ревью PR в текущей вкладке', argumentHint: '<номер PR> | stop' },
-  { name: 'pr', description: 'Что делать с PR: статусы и выбор сценария', argumentHint: '[номер PR] | cleanup' },
+  { name: 'pr', description: 'Что делать с PR: статусы и выбор сценария', argumentHint: '[номер PR] | all | cleanup' },
   { name: 'pr-recheck', description: 'Перепроверить правки в чужом PR после моего ревью', argumentHint: '<номер PR> | stop' },
   { name: 'pr-feedback', description: 'Разобрать замечания к своему PR', argumentHint: '<номер PR> | stop' },
   { name: 'pr-fix', description: 'Раунд правок своего PR', argumentHint: '<номер PR> | stop' },
@@ -1008,8 +1040,15 @@ export const register: Register = (on, options) => {
         return { text: `review-kit: ${(error as Error).message}` }
       }
     }
+    if (arg === 'all') {
+      try {
+        return { text: await openAll($) }
+      } catch (error) {
+        return { text: `review-kit: ${(error as Error).message}` }
+      }
+    }
     const pr = arg === '' ? undefined : Number(arg)
-    if (pr !== undefined && (!Number.isInteger(pr) || pr < 1)) return { text: 'Использование: /pr [номер PR] | /pr cleanup' }
+    if (pr !== undefined && (!Number.isInteger(pr) || pr < 1)) return { text: 'Использование: /pr [номер PR] | /pr all | /pr cleanup' }
 
     try {
       return { text: await routePr($, pr, 'submit') }
@@ -1073,7 +1112,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'mcp__review-kit__review_tab' }, async ($, e) => {
     try {
-      return { result: await openTabs($, (e as unknown as { prs: number[] }).prs) }
+      return { result: await reviewTabs($, (e as unknown as { prs: number[] }).prs) }
     } catch (error) {
       return { result: `review-kit: ${(error as Error).message}` }
     }
