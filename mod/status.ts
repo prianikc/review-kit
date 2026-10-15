@@ -1,10 +1,10 @@
 import type { Comment, ForgeProvider, PullRequest, Review, Thread } from './forge/types.ts'
 
 export const MARKER = '<!-- review-kit -->'
-export const ACTIONABLE: readonly Scenario[] = ['feedback', 'review', 'recheck']
+export const ACTIONABLE: readonly Scenario[] = ['feedback', 'conflict', 'review', 'recheck']
 export const OPEN_ALL = 'Открыть все'
 
-export type Scenario = 'closed' | 'feedback' | 'none-own' | 'review' | 'recheck' | 'wait-author'
+export type Scenario = 'closed' | 'conflict' | 'feedback' | 'none-own' | 'review' | 'recheck' | 'wait-author'
 
 export interface PrData {
   pull: PullRequest
@@ -63,6 +63,7 @@ export interface ListRow {
   headRef: string
   scenario: Scenario
   status: Status
+  conflicted: boolean
 }
 
 function same(a: string, b: string): boolean {
@@ -135,7 +136,7 @@ function awaitsMe(data: PrData): boolean {
 
 export function scenarioOf(data: PrData): Scenario {
   if (data.pull.state === 'closed') return 'closed'
-  if (same(data.pull.author, data.me)) return awaitsMe(data) ? 'feedback' : 'none-own'
+  if (same(data.pull.author, data.me)) return awaitsMe(data) ? 'feedback' : data.pull.conflicted ? 'conflict' : 'none-own'
 
   const { reviews, threads } = live(data)
   const last = latestMine(reviews, data.me)
@@ -170,7 +171,7 @@ export function contextOf(data: PrData, scenario: Scenario): PrContext {
   }
 }
 
-export type Status = 'влит' | 'закрыт' | 'есть замечания' | 'на проверке' | 'перепроверка' | 'готов к слиянию' | 'ждём автора' | 'ждём ревью'
+export type Status = 'влит' | 'закрыт' | 'конфликт' | 'есть замечания' | 'на проверке' | 'перепроверка' | 'готов к слиянию' | 'ждём автора' | 'ждём ревью'
 const PULL_LIMIT = 50
 const PULL_CONCURRENCY = 4
 
@@ -185,6 +186,7 @@ function readyToMerge(data: PrData): boolean {
 export function statusOf(data: PrData, scenario: Scenario): Status {
   if (scenario === 'closed') return data.pull.merged ? 'влит' : 'закрыт'
   if (scenario === 'feedback') return 'есть замечания'
+  if (scenario === 'conflict') return 'конфликт'
   if (scenario === 'review') return 'на проверке'
   if (scenario === 'recheck') return 'перепроверка'
   if (readyToMerge(data)) return 'готов к слиянию'
@@ -198,12 +200,16 @@ export async function pullRows(provider: ForgeProvider): Promise<{ rows: ListRow
     const batch = await Promise.all(pulls.slice(at, at + PULL_CONCURRENCY).map(async pull => {
       const data = await loadPr(provider, pull.number, pull)
       const scenario = scenarioOf(data)
-      return { number: pull.number, title: pull.title, author: pull.author, isOwn: same(pull.author, data.me), headRef: pull.headRef, scenario, status: statusOf(data, scenario) }
+      return { number: pull.number, title: pull.title, author: pull.author, isOwn: same(pull.author, data.me), headRef: pull.headRef, scenario, status: statusOf(data, scenario), conflicted: pull.conflicted }
     }))
     rows.push(...batch)
   }
   const rank = (row: ListRow) => (ACTIONABLE.includes(row.scenario) ? 0 : 1)
   return { rows: rows.sort((a, b) => rank(a) - rank(b) || Number(b.isOwn) - Number(a.isOwn) || a.number - b.number), truncated: pulls.length >= PULL_LIMIT }
+}
+
+export function rowLine(row: ListRow): string {
+  return `#${row.number} ${row.status}${row.conflicted ? ' · конфликт' : ''} · ${row.author} — ${row.title}`
 }
 
 export function prMenu(labels: readonly string[], max: number): string[] | undefined {

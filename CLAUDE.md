@@ -11,17 +11,17 @@ POSIX (Linux, macOS, WSL), git ≥ 2.31, Node 24. Версия — `version` в 
 |---|---|
 | `.claude-plugin/` | манифест (`plugin.json`: версия, `userConfig`) и `marketplace.json` |
 | `hooks/hooks.json` | подключает мод `mod/register.ts` |
-| `mod/register.ts` | команды `/pr…`, инструменты `review_*`, `replies_publish`, `commit_push`, хуки, состояние прогона |
+| `mod/register.ts` | команды `/pr…`, инструменты `review_*`, `conflict_start`, `replies_publish`, `commit_push`, хуки, состояние прогона |
 | `mod/forge/` | модель хостинга (`types.ts`), выбор адаптера и токена (`index.ts`), адаптеры (`forgejo.ts`), фейк для тестов |
 | `mod/status.ts` | сценарий и статус PR, intake замечаний |
 | `mod/run/` | вход агентам (`input.ts`), сбор находок и триажа (`findings.ts`), тело ревью и ответы (`review.ts`) |
-| `mod/git.ts` | переключение на PR, раунд, commit+push, уборка, worktree |
+| `mod/git.ts` | переключение на PR, раунд, слияние базы, commit+push, уборка, worktree |
 | `mod/orca.ts`, `mod/plannotator.ts` | интеграции с Orca и Plannotator |
 | `mod/policy.ts` | guard прогона: запрет сырых git/curl-команд |
 | `mod/gate.ts` | gate чтения манифеста агентами |
 | `funnel/` | Workflow-скрипты: `review-funnel.js` (A/B → C), `triage.js` (D) |
 | `agents/` | `correctness` (A), `quality` (B), `refuter` (C), `triage` (D) |
-| `skills/` | `pr-flow`, `pr-review-run`, `pr-feedback-run`, `pr-fix-run`, `pr-recheck-run`, `pr-tab`, `commit` |
+| `skills/` | `pr-flow`, `pr-review-run`, `pr-feedback-run`, `pr-fix-run`, `pr-recheck-run`, `pr-tab`, `commit`, `confl` |
 | `config/funnel.json` | пороги воронки |
 
 Рабочие файлы прогона в целевом проекте — `.review-kit/run/<N>/`.

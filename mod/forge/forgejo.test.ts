@@ -58,9 +58,21 @@ test('getPull: маппинг и заголовок авторизации', asy
   const { instance, calls } = provider({ [`GET ${API}/pulls/42`]: ok(fixture('pull.json')) })
   assert.deepEqual(await instance.getPull(42), {
     number: 42, title: 'Добавить экспорт', author: 'Bob', headRef: 'feature/export', headSha: 'aaa111', baseRef: 'main',
-    state: 'open', merged: false, url: 'https://git.example.org/team/app/pulls/42',
+    state: 'open', merged: false, url: 'https://git.example.org/team/app/pulls/42', conflicted: false,
   })
   assert.equal(calls[0].init?.headers?.Authorization, 'token T')
+})
+
+test('getPull: конфликт — только открытый невлитый PR с mergeable false', async () => {
+  const raw = JSON.parse(fixture('pull.json')) as Record<string, unknown>
+  const conflicted = async (over: Record<string, unknown>) => {
+    const { instance } = provider({ [`GET ${API}/pulls/42`]: ok(JSON.stringify({ ...raw, ...over })) })
+    return (await instance.getPull(42)).conflicted
+  }
+  assert.equal(await conflicted({ mergeable: false }), true)
+  assert.equal(await conflicted({ mergeable: true }), false)
+  assert.equal(await conflicted({ mergeable: false, state: 'closed' }), false)
+  assert.equal(await conflicted({ mergeable: false, merged: true }), false)
 })
 
 test('commitDate: дата коммиттера', async () => {

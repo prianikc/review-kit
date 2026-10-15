@@ -178,6 +178,8 @@ export async function applySwitch(run: Run, plan: SwitchPlan): Promise<{ head: s
 }
 
 export const STASH_PREFIX = 'review-kit:'
+const OPERATIONS = [['rebase-merge', 'rebase'], ['rebase-apply', 'rebase'], ['MERGE_HEAD', 'merge'], ['CHERRY_PICK_HEAD', 'cherry-pick'], ['REVERT_HEAD', 'revert']] as const
+const MARKER_LINE = '^(<<<<<<<|>>>>>>>)( |$)'
 const BASE_BRANCH = 'main'
 const REVIEW_WORKTREE = /^pr-(\d+)-/
 
@@ -199,11 +201,11 @@ export function messageProblem(message: string): string | undefined {
   return undefined
 }
 
-export async function roundState(run: Run, { branch, roundBase, message }: { branch: string; roundBase: string; message: string }): Promise<{ state: RoundState; roundBase: string }> {
+export async function roundState(run: Run, { branch, roundBase, message, firstParent = false }: { branch: string; roundBase: string; message: string; firstParent?: boolean }): Promise<{ state: RoundState; roundBase: string }> {
   await run(['git', 'fetch', '-q', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`])
   const head = (await gitText(run, ['rev-parse', 'HEAD'])).trim()
   const parents = (await gitText(run, ['rev-list', '--parents', '-n', '1', 'HEAD'])).trim().split(' ').slice(1)
-  const parent = parents.length === 1 ? parents[0] : ''
+  const parent = parents.length === 1 || firstParent ? parents[0] ?? '' : ''
   const base = head === roundBase || parent === roundBase ? roundBase : (await gitText(run, ['merge-base', 'HEAD', `origin/${branch}`])).trim()
   if (head === base) return { state: 'commit', roundBase: base }
   const subject = (await gitText(run, ['log', '-1', '--format=%s'])).trim()
@@ -234,6 +236,48 @@ export async function commitRound(run: Run, { paths, message }: { paths: string[
     return { ok: false, output: `в индексе есть файлы вне подтверждённого списка (их staging не тронут):\n${extra.join('\n')}` }
   }
   if (staged.length === 0) return { ok: false, output: 'в подтверждённых путях нечего коммитить' }
+  const committed = await run(['git', 'commit', '-q', '-m', message])
+  return committed.exitCode === 0 ? { ok: true } : { ok: false, output: `${committed.stdout}${committed.stderr}`.trim() }
+}
+
+export async function operationInProgress(run: Run): Promise<string | undefined> {
+  for (const [name, operation] of OPERATIONS) {
+    const path = (await gitText(run, ['rev-parse', '--git-path', name])).trim()
+    if ((await run(['test', '-e', path])).exitCode === 0) return operation
+  }
+  return undefined
+}
+
+export async function unmergedPaths(run: Run): Promise<string[]> {
+  return (await gitText(run, ['diff', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean)
+}
+
+export async function mergeBase(run: Run, baseRef: string): Promise<{ conflicts: string[] }> {
+  const merged = await run(['git', 'merge', '-q', '--no-ff', '--no-commit', `origin/${baseRef}`])
+  const conflicts = await unmergedPaths(run)
+  if (conflicts.length) return { conflicts }
+  if (await hasRef(run, 'MERGE_HEAD')) await gitText(run, ['merge', '--abort'])
+  if (merged.exitCode !== 0) throw new Error(`git merge: ${`${merged.stderr}${merged.stdout}`.trim()}`)
+  return { conflicts: [] }
+}
+
+export async function mergeProblem(run: Run, paths: string[]): Promise<string | undefined> {
+  if (!(await hasRef(run, 'MERGE_HEAD'))) return 'слияния нет — в дереве не идёт merge'
+  if (paths.length === 0) return 'нет файлов с конфликтом в paths'
+  const glob = paths.find(path => /^:|[*?[]/.test(path))
+  if (glob) return `путь ${glob} — pathspec или glob, нужен путь к файлу`
+  const unresolved = (await unmergedPaths(run)).filter(path => !paths.includes(path))
+  if (unresolved.length) return `не разрешены и не переданы в paths:\n${unresolved.join('\n')}`
+  const marked = (await run(['grep', '-lsE', MARKER_LINE, '--', ...paths])).stdout.split('\n').filter(Boolean)
+  return marked.length ? `в файлах остались маркеры конфликта:\n${marked.join('\n')}` : undefined
+}
+
+export async function commitMerge(run: Run, { paths, message }: { paths: string[]; message: string }): Promise<{ ok: true } | { ok: false; output: string }> {
+  const problem = await mergeProblem(run, paths)
+  if (problem) return { ok: false, output: problem }
+  await gitText(run, ['add', '-A', '--', ...paths])
+  const left = await unmergedPaths(run)
+  if (left.length) return { ok: false, output: `не разрешены:\n${left.join('\n')}` }
   const committed = await run(['git', 'commit', '-q', '-m', message])
   return committed.exitCode === 0 ? { ok: true } : { ok: false, output: `${committed.stdout}${committed.stderr}`.trim() }
 }

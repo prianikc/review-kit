@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ACTIONABLE, contextOf, OPEN_ALL, placeAll, prMenu, pullRows, splitHere, statusOf, intakeItems, loadPr, MARKER, priorComments, scenarioOf, type PrData } from './status.ts'
+import { ACTIONABLE, contextOf, rowLine, OPEN_ALL, placeAll, prMenu, pullRows, splitHere, statusOf, intakeItems, loadPr, MARKER, priorComments, scenarioOf, type PrData } from './status.ts'
 import { fakeProvider } from './forge/fake.ts'
 import type { Comment, PullRequest, Review, Thread } from './forge/types.ts'
 
-const pull = (over: Partial<PullRequest> = {}): PullRequest => ({ number: 5, title: 'T', author: 'bob', headRef: 'f', headSha: 'h2', baseRef: 'main', state: 'open', merged: false, url: 'u', ...over })
+const pull = (over: Partial<PullRequest> = {}): PullRequest => ({ number: 5, title: 'T', author: 'bob', headRef: 'f', headSha: 'h2', baseRef: 'main', state: 'open', merged: false, url: 'u', conflicted: false, ...over })
 const review = (id: string, author: string, state: Review['state'], commitSha = 'h1', submittedAt = '2026-10-01T10:00:00Z', body = ''): Review => ({ id, author, state, body, commitSha, submittedAt, dismissed: false })
 const comment = (id: string, author: string, body: string, createdAt: string, reviewId = 'r1'): Comment => ({ id, author, body, createdAt, path: 'a.ts', line: 3, commitSha: 'h1', reviewId })
 const thread = (comments: Comment[], resolved = false): Thread => ({ id: `${comments[0].reviewId}:a.ts:3`, path: 'a.ts', line: 3, commitSha: 'h1', comments, resolved })
@@ -175,4 +175,28 @@ test('splitHere: первый запускается здесь, если про
   assert.deepEqual(splitHere([2, 5], false), { start: 2, later: [5] })
   assert.deepEqual(splitHere([2, 5], true), { start: undefined, later: [2, 5] })
   assert.deepEqual(splitHere([], false), { start: undefined, later: [] })
+})
+
+test('свой PR с конфликтом → conflict, статус «конфликт», есть дело; замечания важнее', () => {
+  const conflicted = own({ pull: pull({ author: 'Alice', conflicted: true }) })
+  assert.equal(scenarioOf(conflicted), 'conflict')
+  assert.equal(statusOf(conflicted, 'conflict'), 'конфликт')
+  assert.ok(ACTIONABLE.includes('conflict'))
+  const threads = [thread([comment('c1', 'carol', 'Имя', '2026-10-01T10:00:00Z')])]
+  assert.equal(scenarioOf(own({ pull: pull({ author: 'Alice', conflicted: true }), threads })), 'feedback')
+})
+
+test('чужой PR с конфликтом — прежний сценарий', () => {
+  assert.equal(scenarioOf(data({ pull: pull({ conflicted: true }) })), 'review')
+})
+
+test('rowLine: метка конфликта только у PR с конфликтом', () => {
+  const row = { number: 7, title: 'T', author: 'bob', isOwn: false, headRef: 'f', scenario: 'review' as const, status: 'на проверке' as const, conflicted: false }
+  assert.equal(rowLine(row), '#7 на проверке · bob — T')
+  assert.equal(rowLine({ ...row, conflicted: true }), '#7 на проверке · конфликт · bob — T')
+})
+
+test('pullRows: строка несёт признак конфликта', async () => {
+  const fake = fakeProvider({ me: 'alice', pulls: [pull({ number: 1, author: 'alice', conflicted: true }), pull({ number: 2 })] })
+  assert.deepEqual((await pullRows(fake)).rows.map(r => [r.number, r.scenario, r.conflicted]), [[1, 'conflict', true], [2, 'review', false]])
 })

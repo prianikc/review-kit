@@ -3,10 +3,10 @@ import { addSessionFile, allowsManualCommit, classifyBash, guardText, isCommitCo
 import { manifestPaths, MAX_RETURNS, parseManifest, parseRole, unreadFiles, type GatedAgent } from './gate.ts'
 import { ADAPTERS, createProvider, selectProvider, withTimeout, type ExplicitConfig } from './forge/index.ts'
 import type { ForgeProvider } from './forge/types.ts'
-import { ACTIONABLE, contextOf, OPEN_ALL, placeAll, prMenu, pullRows, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type ListRow, type PrContext, type PrData } from './status.ts'
+import { ACTIONABLE, contextOf, OPEN_ALL, placeAll, prMenu, pullRows, rowLine, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type PrContext, type PrData } from './status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, readRules, type TriageItem } from './run/input.ts'
 import { collectFindings, finishTriage, type Finding, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
-import { applySwitch, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitRound, deleteBranches, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
+import { applySwitch, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
 import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, parseMessage, reconcile } from './plannotator.ts'
 import { buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, type Texts } from './run/review.ts'
@@ -87,7 +87,7 @@ async function runDir($: EngineInterface, pr: number): Promise<string> {
 }
 
 async function openRun($: EngineInterface, { pr, context, head, scenario }: { pr: number; context: PrContext; head: string; scenario: RunScenario }): Promise<void> {
-  const own = scenario === 'feedback' || scenario === 'fix'
+  const own = scenario === 'feedback' || scenario === 'fix' || scenario === 'conflict'
   const path = `${await runDir($, pr)}/session.json`
   const kept = (await readJson<{ roundBase?: string }>($, path, {})).roundBase
   await $.fs.write(path, JSON.stringify({ sessionId: await $.session.id(), status: 'active', ...(own ? { roundBase: kept ?? head } : {}) }))
@@ -109,11 +109,11 @@ async function foreignRun($: EngineInterface, pr: number): Promise<boolean> {
   }
 }
 
-type RunScenario = 'review' | 'recheck' | 'feedback' | 'fix'
+type RunScenario = 'review' | 'recheck' | 'feedback' | 'fix' | 'conflict'
 
 const READ_ONLY_SCENARIOS: readonly RunScenario[] = ['review', 'recheck']
 
-const SKILL_OF: Record<RunScenario, string> = { review: 'pr-review-run', recheck: 'pr-recheck-run', feedback: 'pr-feedback-run', fix: 'pr-fix-run' }
+const SKILL_OF: Record<RunScenario, string> = { review: 'pr-review-run', recheck: 'pr-recheck-run', feedback: 'pr-feedback-run', fix: 'pr-fix-run', conflict: 'confl' }
 
 function handOff($: EngineInterface, pr: number, handoff: Handoff, scenario: RunScenario = 'review'): string {
   const text = `Use the review-kit:${SKILL_OF[scenario]} skill for PR ${pr}; context: .review-kit/run/${pr}/context.json`
@@ -391,7 +391,7 @@ async function routePr($: EngineInterface, pr: number | undefined, handoff: Hand
 
     const { rows, truncated } = await pullRows(await forge($))
     const actionable = rows.filter(row => ACTIONABLE.includes(row.scenario))
-    const line = (row: ListRow) => `#${row.number} ${row.status} · ${row.author} — ${row.title}`
+    const line = rowLine
     const tail = truncated ? '\nПрочитано 50 открытых PR — это предел одного запроса; если PR больше, остальные — /pr <номер>' : ''
     if (actionable.length === 0) return withCleanup($, rows.length ? `Открытые PR:\n${rows.map(line).join('\n')}\nДелать нечего.${tail}` : 'Открытых PR нет.', 0)
     const labels = actionable.map(line)
@@ -414,7 +414,16 @@ async function routePr($: EngineInterface, pr: number | undefined, handoff: Hand
   if (context.scenario === 'review') return startReview($, pr, { loaded, handoff })
   if (context.scenario === 'feedback') return startFix($, pr, { loaded, handoff, scenario: 'feedback' })
   if (context.scenario === 'recheck') return startReview($, pr, { loaded, handoff, scenario: 'recheck' })
+  if (context.scenario === 'conflict') return conflictHandoff($, context, handoff)
   return context.scenario === 'closed' ? closedText(context) : SCENARIO_TEXT[context.scenario]
+}
+
+function conflictHandoff($: EngineInterface, context: PrContext, handoff: Handoff): string {
+  const text = `Use the review-kit:confl skill for PR ${context.number}`
+  const what = `PR ${context.number} (свой): конфликт с ${context.baseRef}.`
+  if (handoff === 'return') return `${what} ${text}`
+  submitLater($, text, SUBMIT_ATTEMPTS)
+  return `${what} Разрешаю: /confl ${context.number}.`
 }
 
 async function startReview($: EngineInterface, pr: number, { loaded, handoff, scenario = 'review' }: { loaded: Loaded; handoff: Handoff; scenario?: 'review' | 'recheck' }): Promise<string> {
@@ -451,8 +460,8 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
   const root = await projectRoot($)
 
   const reviewing = scenario === 'review' || scenario === 'recheck'
-  const model = await $.ui.ask(`Модель для ${reviewing ? 'ревью' : 'разбора замечаний'} PR ${pr}?`, ['opus', 'sonnet', 'haiku']).catch(() => undefined)
-  if (!model) return 'Отменено: дерево не тронуто.'
+  const model = scenario === 'conflict' ? '' : await $.ui.ask(`Модель для ${reviewing ? 'ревью' : 'разбора замечаний'} PR ${pr}?`, ['opus', 'sonnet', 'haiku']).catch(() => undefined)
+  if (!model && scenario !== 'conflict') return 'Отменено: дерево не тронуто.'
 
   const run = runner($)
   const provider = await forge($)
@@ -489,6 +498,7 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
   const plannotator = await runner($)(['plannotator', '--version']).then(result => result.exitCode === 0, () => false)
   await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, model, scenario, plannotator }))
   await openRun($, { pr, context, head: switched.head, scenario })
+  if (scenario === 'conflict') return `PR ${pr} (свой, конфликт): дерево на ${context.headRef}${stash ? `, stash «${stash}»` : ''}.`
   const next = handOff($, pr, handoff, scenario)
 
   if (scenario === 'feedback' || scenario === 'fix') {
@@ -497,6 +507,42 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
 
   const who = context.isOwn ? 'свой — только отчёт' : context.state === 'closed' ? 'закрыт — только отчёт' : context.author
   return `PR ${pr} (${who}): дерево на ${switched.detached ? 'коммите PR' : context.headRef}${stash ? `, stash «${stash}»` : ''}, модель ${model}${switched.baseFallback ? `, база ревью — от main: ветка ${context.baseRef} на сервере удалена` : ''}. Прогон открыт до конца ревью; закрыть вручную — /pr-review stop.${next}`
+}
+
+async function startConflict($: EngineInterface, pr: number): Promise<string> {
+  const run = runner($)
+  const facts = await runFacts($)
+  if (facts?.status === 'active' && facts.pr === pr && facts.scenario === 'conflict') return conflictState($, pr, `Прогон PR ${pr} уже идёт.`)
+  const loaded = await prContext($, pr)
+  const { context } = loaded
+  if (!context.isOwn) return `not started: PR ${pr} не ваш — конфликты разрешает автор`
+  if (context.state === 'closed') return `not started: PR ${pr} закрыт`
+  const operation = await operationInProgress(run)
+  if (operation || (await unmergedPaths(run)).length) return `not started: в дереве идёт ${operation ?? 'разрешение конфликтов'} — закончите его: /confl без номера`
+  const opened = await startRun($, pr, { loaded, handoff: 'return', scenario: 'conflict' })
+  const now = await runFacts($)
+  if (now?.status !== 'active' || now.pr !== pr || now.scenario !== 'conflict') return `not started: ${opened}`
+  return conflictState($, pr, opened)
+}
+
+async function conflictState($: EngineInterface, pr: number, opened: string): Promise<string> {
+  const run = runner($)
+  const { dir, context } = await writeContext($, pr)
+  if ((await operationInProgress(run)) === 'merge') {
+    const left = await unmergedPaths(run)
+    return left.length ? `${opened}\nconflicts:\n${left.join('\n')}` : `${opened}\nresolved: конфликты разрешены, слияние не закоммичено — commit_push`
+  }
+  const parents = (await gitText(run, ['rev-list', '--parents', '-n', '1', 'HEAD'])).trim().split(' ').slice(1)
+  if (parents.length === 2 && (await unpushed(run, context.headRef)).length && (await isAncestor(run, `origin/${context.baseRef}`, 'HEAD'))) {
+    const session = await readJson<Record<string, unknown>>($, `${dir}/session.json`, {})
+    await $.fs.write(`${dir}/session.json`, JSON.stringify({ ...session, roundBase: parents[0] }))
+    const subject = (await gitText(run, ['log', '-1', '--format=%s'])).trim()
+    return `${opened}\nmerged: слияние «${subject}» уже закоммичено, но не запушено — commit_push с этим message`
+  }
+  const { conflicts } = await mergeBase(run, context.baseRef)
+  if (conflicts.length) return `${opened}\nconflicts:\n${conflicts.join('\n')}`
+  await finishRun($, pr, 'done')
+  return `${opened}\nclean: конфликтов с ${context.baseRef} нет — база не вливалась, прогон закрыт`
 }
 
 type PrepareKind = 'review' | 'recheck' | 'feedback' | 'fix-check'
@@ -679,25 +725,30 @@ async function commitPush($: EngineInterface, { pr, message, paths }: { pr: numb
   if (branch !== context.headRef) return `not done: дерево на ветке ${branch || '(detached)'}, а PR — ${context.headRef}`
   const session = await readJson<{ roundBase?: string }>($, `${dir}/session.json`, {})
   if (!session.roundBase) return 'not done: у прогона нет базы раунда — начните раунд заново (/pr-fix)'
-  const { state, roundBase } = await roundState(run, { branch, roundBase: session.roundBase, message })
+  const merging = context.scenario === 'conflict'
+  const { state, roundBase } = await roundState(run, { branch, roundBase: session.roundBase, message, firstParent: merging })
   if (roundBase !== session.roundBase) await $.fs.write(`${dir}/session.json`, JSON.stringify({ ...session, roundBase }))
   if (state === 'pushed') return `pushed: коммит раунда «${message}» уже на origin`
   if (state === 'commit') {
-    const foreign = await foreignChanges(run, paths)
+    const problem = merging ? await mergeProblem(run, paths) : undefined
+    if (problem) return `not done: ${problem}`
+    const foreign = merging ? [] : await foreignChanges(run, paths)
     if (foreign.length) return `not done: изменены файлы вне списка раунда — добавьте их в paths или верните:\n${foreign.join('\n')}`
   }
   const pending = await unpushed(run, branch)
-  const what = state === 'commit' ? `Коммитим и пушим в ${branch} (PR ${pr})?\n\n${message}\n\nФайлы:\n${paths.join('\n')}` : `Пушим в ${branch} (PR ${pr}) коммит раунда «${message}»?`
+  const commitWhat = merging ? `Коммитим слияние ${context.baseRef} и пушим в ${branch} (PR ${pr})?\n\n${message}\n\nРазрешённые конфликты:` : `Коммитим и пушим в ${branch} (PR ${pr})?\n\n${message}\n\nФайлы:`
+  const what = state === 'commit' ? `${commitWhat}\n${paths.join('\n')}` : `Пушим в ${branch} (PR ${pr}) коммит ${merging ? 'слияния' : 'раунда'} «${message}»?`
   const question = `${what}${pending.length ? `\n\nУйдут и неотправленные коммиты:\n${pending.join('\n')}` : ''}`.slice(0, CONFIRM_TEXT_LIMIT)
   if ((await $.ui.ask(question, ['Да', 'Нет']).catch(() => 'Нет')) !== 'Да') return 'not done: пользователь отказал'
   if (state === 'commit') {
-    const committed = await commitRound(run, { paths, message })
+    const committed = merging ? await commitMerge(run, { paths, message }) : await commitRound(run, { paths, message })
     if (!committed.ok) return `not done: коммита нет — ${committed.output}`
   }
   const pushed = await pushRound(run, branch)
   if (pushed.ok) return `pushed: ${(await gitText(run, ['rev-parse', '--short', 'HEAD'])).trim()} в ${branch}`
+  if (pushed.rejected && merging) return `not pushed: ветка на origin ушла вперёд — коммит слияния сохранён. Пусть пользователь выполнит \`! git pull --no-rebase\`, затем review_finish и снова /confl ${pr}.\n${pushed.output}`
   return pushed.rejected
-    ? `not pushed: ветка на origin ушла вперёд — нужен pull/rebase. Пусть пользователь выполнит \`! git pull --rebase\` (или в своём терминале), затем снова commit_push.\n${pushed.output}`
+    ? `not pushed: ветка на origin ушла вперёд — нужен pull/rebase. Пусть пользователь выполнит \`! git pull --rebase\` (или в своём терминале; конфликты — /confl), затем снова commit_push.\n${pushed.output}`
     : `not pushed: push не прошёл (коммит раунда сохранён, повтор commit_push только запушит): ${pushed.output}`
 }
 
@@ -952,8 +1003,14 @@ const TOOL_SPECS = [
   },
   {
     name: 'commit_push',
-    description: 'Commit the round paths of the own PR with a one-line message and push, after the user confirms in the tool\'s own dialog. Safe to repeat: a committed round is only pushed. Answers "pushed: …", "not pushed: …" (rejected — the user pulls with rebase first) or "not done: …" (a failing pre-commit hook output included).',
+    description: 'Commit the round paths of the own PR with a one-line message and push (in a conflict run: commit the base merge, paths = the resolved conflict files), after the user confirms in the tool\'s own dialog. Safe to repeat: a committed round is only pushed. Answers "pushed: …", "not pushed: …" (rejected — the user pulls with rebase first) or "not done: …" (a failing pre-commit hook output included).',
     inputSchema: { type: 'object', properties: { pr: { type: 'number' }, message: { type: 'string' }, paths: { type: 'array', items: { type: 'string' } } }, required: ['pr', 'message', 'paths'] },
+    isDeferred: false,
+  },
+  {
+    name: 'conflict_start',
+    description: 'Start a conflict run for the own PR: switch the tree to its branch and merge the base into it. Asks the user in dialogs. Answers text ending with "conflicts:" + files to resolve, "resolved: …", "merged: …" (merge committed, not pushed), "clean: …" (no conflicts, run closed) or "not started: …".',
+    inputSchema: { type: 'object', properties: { pr: { type: 'number' } }, required: ['pr'] },
     isDeferred: false,
   },
   {
@@ -1162,6 +1219,16 @@ export const register: Register = (on, options) => {
       return { result: `review-kit: ${(error as Error).message}` }
     }
   }).catch(() => ({ result: 'review-kit: commit_push не выполнен' }))
+
+  on('tool.call', { tool: 'mcp__review-kit__conflict_start' }, async ($, e) => {
+    const { pr } = e as unknown as { pr: number }
+    if (!Number.isInteger(pr) || pr < 1) return { result: 'not started: номер PR — целое больше нуля' }
+    try {
+      return { result: await startConflict($, pr) }
+    } catch (error) {
+      return { result: `review-kit: ${(error as Error).message}` }
+    }
+  }).catch(() => ({ result: 'review-kit: conflict_start не выполнен' }))
 
   on('tool.call', { tool: 'mcp__review-kit__review_tab' }, async ($, e) => {
     try {

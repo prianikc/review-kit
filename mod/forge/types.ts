@@ -8,6 +8,7 @@ export interface PullRequest {
   state: 'open' | 'closed'
   merged: boolean
   url: string
+  conflicted: boolean
 }
 
 export interface Comment {

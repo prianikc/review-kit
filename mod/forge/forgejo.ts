@@ -9,7 +9,7 @@ const RECONCILE_PAUSE_MS = 5000
 const UNKNOWN_STATUS = 'статус публикации неизвестен'
 
 type RawUser = { login: string } | null
-interface RawPull { number: number; title: string; user: RawUser; head: { ref: string; sha: string }; base: { ref: string }; state: string; merged?: boolean; html_url: string }
+interface RawPull { number: number; title: string; user: RawUser; head: { ref: string; sha: string }; base: { ref: string }; state: string; merged?: boolean; mergeable?: boolean; html_url: string }
 interface RawReview { id: number; user: RawUser; state: string; body?: string; commit_id: string; submitted_at: string | null; dismissed?: boolean; html_url?: string }
 interface RawReviewComment { id: number; user: RawUser; body: string; created_at: string; path: string; position: number; commit_id: string; pull_request_review_id: number; resolver?: RawUser }
 interface RawIssueComment { id: number; user: RawUser; body: string; created_at: string }
@@ -31,9 +31,11 @@ function login(user: RawUser): string {
 }
 
 function toPull(raw: RawPull): PullRequest {
+  const state = raw.state === 'closed' ? 'closed' : 'open'
+  const merged = Boolean(raw.merged)
   return {
     number: raw.number, title: raw.title, author: login(raw.user), headRef: raw.head.ref, headSha: raw.head.sha,
-    baseRef: raw.base.ref, state: raw.state === 'closed' ? 'closed' : 'open', merged: Boolean(raw.merged), url: raw.html_url,
+    baseRef: raw.base.ref, state, merged, url: raw.html_url, conflicted: state === 'open' && !merged && raw.mergeable === false,
   }
 }
 

@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { applySwitch, claudeCodeChanges, planSwitch } from './git.ts'
 import { branchCandidates, commitRound, deleteBranches, foreignChanges, headShift, messageProblem, pushRound, reviewStashes, roundState, stashAction } from './git.ts'
 import { createReviewWorktree, reviewed, shellQuote, worktreeName } from './git.ts'
+import { commitMerge, mergeBase, mergeProblem, operationInProgress } from './git.ts'
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 
@@ -294,4 +295,55 @@ test('worktree ревью: создаётся; повтор ставит на н
   spawnSync('git', ['-C', bare, 'update-ref', '-d', 'refs/heads/main'])
   r.git('update-ref', '-d', 'refs/remotes/origin/main')
   await assert.rejects(createReviewWorktree(r.run, { ...input, number: 9, baseRef: 'gone', headSha: next }), /базу PR не найти/)
+})
+
+function baseMoved(conflict: boolean) {
+  const { r, roundBase } = ownRound()
+  r.git('switch', '-q', 'main')
+  if (conflict) r.commit('a.txt', 'main', 'main edits a')
+  r.commit('c.txt', '1', 'main adds c')
+  r.git('push', '-q', 'origin', 'main'); r.git('switch', '-q', 'feat')
+  return { r, roundBase }
+}
+
+test('mergeBase: конфликт — список файлов, слияние остаётся в дереве', async () => {
+  const { r } = baseMoved(true)
+  assert.deepEqual(await mergeBase(r.run, 'main'), { conflicts: ['a.txt'] })
+  assert.equal(await operationInProgress(r.run), 'merge')
+})
+
+test('mergeBase: без конфликтов или база уже в ветке — слияние отменено, дерево как было', async () => {
+  const { r, roundBase } = baseMoved(false)
+  assert.deepEqual(await mergeBase(r.run, 'main'), { conflicts: [] })
+  assert.equal(r.git('rev-parse', 'HEAD'), roundBase)
+  assert.equal(r.git('status', '--porcelain'), '')
+  assert.equal(await operationInProgress(r.run), undefined)
+  const same = ownRound()
+  assert.deepEqual(await mergeBase(same.r.run, 'main'), { conflicts: [] })
+})
+
+test('слияние базы: проверки, коммит, раунд по первому родителю, push', async () => {
+  const { r, roundBase } = baseMoved(true)
+  await mergeBase(r.run, 'main')
+  assert.match(await mergeProblem(r.run, ['a.txt']) ?? '', /маркеры конфликта:\na.txt/)
+  writeFileSync(join(r.dir, 'a.txt'), 'both')
+  assert.match(await mergeProblem(r.run, []) ?? '', /нет файлов/)
+  assert.match(await mergeProblem(r.run, ['c.txt']) ?? '', /не разрешены[^]*a.txt/)
+  assert.equal(await mergeProblem(r.run, ['a.txt']), undefined)
+  const message = 'Merge main into feat'
+  assert.equal((await roundState(r.run, { branch: 'feat', roundBase, message, firstParent: true })).state, 'commit')
+  assert.deepEqual(await commitMerge(r.run, { paths: ['a.txt'], message }), { ok: true })
+  assert.equal(r.git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ').length, 3)
+  assert.equal(r.git('show', 'HEAD:c.txt'), '1')
+  assert.equal(await operationInProgress(r.run), undefined)
+  assert.equal((await roundState(r.run, { branch: 'feat', roundBase, message, firstParent: true })).state, 'push')
+  await assert.rejects(roundState(r.run, { branch: 'feat', roundBase, message }), /не продолжает базу раунда/)
+  assert.deepEqual(await pushRound(r.run, 'feat'), { ok: true })
+  assert.equal((await roundState(r.run, { branch: 'feat', roundBase, message, firstParent: true })).state, 'pushed')
+})
+
+test('commitMerge: слияния нет — отказ без коммита', async () => {
+  const { r, roundBase } = ownRound()
+  assert.deepEqual(await commitMerge(r.run, { paths: ['a.txt'], message: 'm' }), { ok: false, output: 'слияния нет — в дереве не идёт merge' })
+  assert.equal(r.git('rev-parse', 'HEAD'), roundBase)
 })
