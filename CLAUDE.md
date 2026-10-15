@@ -21,7 +21,7 @@ POSIX (Linux, macOS, WSL), git ≥ 2.31, Node 24. Версия — `version` в 
 | `mod/gate.ts` | gate чтения манифеста агентами |
 | `funnel/` | Workflow-скрипты: `review-funnel.js` (A/B → C), `triage.js` (D) |
 | `agents/` | `correctness` (A), `quality` (B), `refuter` (C), `triage` (D) |
-| `skills/` | `pr-flow`, `pr-review-run`, `pr-feedback-run`, `pr-fix-run`, `pr-recheck-run`, `pr-tab`, `commit`, `confl` |
+| `skills/` | `pr-flow`, `pr-review-run`, `pr-feedback-run`, `pr-fix-run`, `pr-recheck-run`, `pr-tab`, `commit`, `confl`, `push`, `merge`, `gsync` |
 | `config/funnel.json` | пороги воронки |
 
 Рабочие файлы прогона в целевом проекте — `.review-kit/run/<N>/`.
