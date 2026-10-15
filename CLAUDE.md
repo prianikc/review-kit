@@ -3,7 +3,7 @@
 Плагин Claude Code для работы с pull request'ами: ревью чужих PR воронкой агентов, разбор замечаний к своему PR, раунд
 правок, перепроверка после своего ревью. Хостинг подключается адаптером; сейчас есть только Forgejo/Gitea.
 
-POSIX (Linux, macOS, WSL), git ≥ 2.31, Node 24. Версия — `version` в `.claude-plugin/plugin.json`.
+POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в `.claude-plugin/plugin.json`.
 
 ## Устройство
 

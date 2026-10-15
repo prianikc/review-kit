@@ -559,13 +559,13 @@ async function runContext($: EngineInterface, pr: number): Promise<{ dir: string
   return { dir, context: JSON.parse(String(await $.fs.read(`${dir}/context.json`))) }
 }
 
-async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; id: WorkflowId; base: string; head: string; rulesRev: string; model: string; foreign: boolean; items?: TriageItem[]; mode?: 'feedback' | 'recheck' }): Promise<{ spec: WorkflowSpec; notes: string[] }> {
+async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; id: WorkflowId; base: string; head: string; rulesRev: string; model: string; foreign: boolean; items?: TriageItem[]; mode?: 'feedback' | 'recheck'; scope?: string }): Promise<{ spec: WorkflowSpec; notes: string[] }> {
   const run = runner($)
   const out = `${w.dir}/${w.id}`
   const sha = async (rev: string) => (await gitText(run, ['rev-parse', rev])).trim()
   const [base, head, rulesRev] = await Promise.all([sha(w.base), sha(w.head), sha(w.rulesRev)])
   const { rules, changedRules } = await readRules(run, { rev: rulesRev, base, head })
-  const input = await buildInput(run, { base, head, rules, items: w.items })
+  const input = await buildInput(run, { base, head, rules, items: w.items, scope: w.scope })
   const notes = [
     ...(!w.items && rules.size === 0 ? [B_SKIPPED] : []),
     ...(w.foreign && changedRules.length ? [`PR меняет правила агентов: ${changedRules.join(', ')} — ревью шло по правилам базы`] : []),
@@ -593,9 +593,9 @@ async function prepare($: EngineInterface, pr: number, kind: PrepareKind, paths:
   const parts: Array<{ spec: WorkflowSpec; notes: string[] }> = []
   if (kind === 'review') parts.push(await writeWorkflow($, { ...base, id: 'funnel', base: context.base, head: context.head, rulesRev: context.base, foreign: true }))
   if (kind === 'recheck') {
-    const recheck = JSON.parse(String(await $.fs.read(`${dir}/recheck.json`))) as { base: string; prior: TriageItem[] }
-    parts.push(await writeWorkflow($, { ...base, id: 'statuses', base: recheck.base, head: context.head, rulesRev: context.base, foreign: true, items: recheck.prior, mode: 'recheck' }))
-    parts.push(await writeWorkflow($, { ...base, id: 'delta', base: recheck.base, head: context.head, rulesRev: context.base, foreign: true }))
+    const recheck = JSON.parse(String(await $.fs.read(`${dir}/recheck.json`))) as { base: string; scope?: string; prior: TriageItem[] }
+    parts.push(await writeWorkflow($, { ...base, id: 'statuses', base: recheck.base, head: context.head, rulesRev: context.base, foreign: true, items: recheck.prior, mode: 'recheck', scope: recheck.scope }))
+    parts.push(await writeWorkflow($, { ...base, id: 'delta', base: recheck.base, head: context.head, rulesRev: context.base, foreign: true, scope: recheck.scope }))
   }
   if (kind === 'feedback') {
     const intake = JSON.parse(String(await $.fs.read(`${dir}/intake.json`))) as { items: TriageItem[] }

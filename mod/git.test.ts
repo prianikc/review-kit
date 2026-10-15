@@ -34,6 +34,41 @@ test('recheckBase: история переписана — всё от merge-bas
   assert.match(result.note ?? '', /после rebase/)
 })
 
+function mergedAfterReview(conflict: boolean) {
+  const r = repo()
+  const start = r.commit('a.txt', '1\n', 'base')
+  r.git('switch', '-qc', 'pr')
+  r.commit('p.txt', 'pr\n', 'pr work')
+  const reviewed = conflict ? r.commit('a.txt', 'pr\n', 'pr touches a') : r.git('rev-parse', 'HEAD')
+  r.git('switch', '-q', 'main')
+  r.commit('m.txt', 'main\n', 'main work')
+  if (conflict) r.commit('a.txt', 'main\n', 'main edits a')
+  r.git('update-ref', 'refs/remotes/origin/main', r.git('rev-parse', 'HEAD'))
+  r.git('switch', '-q', 'pr')
+  spawnSync('git', ['merge', '-q', '--no-edit', 'main'], { cwd: r.dir })
+  if (conflict) { writeFileSync(join(r.dir, 'a.txt'), 'both\n'); r.git('add', 'a.txt'); r.git('commit', '-qm', 'merge main') }
+  const head = r.commit('p.txt', 'pr fixed\n', 'pr fix after review')
+  return { r, start, reviewed, head }
+}
+
+test('recheckBase: автор влил main после ревью — синтетическая база, в дельте только его правки', async () => {
+  const { r, reviewed, head } = mergedAfterReview(false)
+  const result = await recheckBase(r.run, { lastCommit: reviewed, head, baseRef: 'main' })
+  assert.equal(result.mode, 'delta')
+  assert.notEqual(result.base, reviewed)
+  assert.match(result.note ?? '', /влил main/)
+  assert.equal(result.scope, r.git('merge-base', 'origin/main', head))
+  assert.deepEqual(await changedFiles(r.run, result.base, head), ['p.txt'])
+  assert.deepEqual(r.git('rev-list', '--parents', '-n', '1', result.base).split(' ').slice(1), [reviewed, result.scope])
+})
+
+test('recheckBase: слияние с конфликтом — в дельте только разрешение конфликта и правки автора', async () => {
+  const { r, reviewed, head } = mergedAfterReview(true)
+  const result = await recheckBase(r.run, { lastCommit: reviewed, head, baseRef: 'main' })
+  assert.deepEqual(await changedFiles(r.run, result.base, head), ['a.txt', 'p.txt'])
+  assert.match(await showFile(r.run, result.base, 'a.txt'), /^<<<<<<< /m)
+})
+
 test('recheckBase: базовой ветки нет — запасной origin/main; нет и его — ошибка', async () => {
   const r = repo()
   const base = r.commit('a.txt', '1', 'base')

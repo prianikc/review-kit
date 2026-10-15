@@ -91,9 +91,10 @@ export async function readRules(run: Run, { rev, base, head }: { rev: string; ba
   return { rules, changedRules: changed.filter(isRulePath) }
 }
 
-export async function buildInput(run: Run, { base, head, rules, items }: { base: string; head: string; rules: Map<string, string>; items?: TriageItem[] }): Promise<string> {
+export async function buildInput(run: Run, { base, head, rules, items, scope }: { base: string; head: string; rules: Map<string, string>; items?: TriageItem[]; scope?: string }): Promise<string> {
   const rulesText = [...rules].map(([path, text]) => `=== RULE FILE: ${path} ===\n${fenced(text)}`).join('\n\n')
-  const all = await changedFiles(run, base, head)
+  const inPr = scope ? new Set(await changedFiles(run, scope, head)) : undefined
+  const all = (await changedFiles(run, base, head)).filter(path => !inPr || inPr.has(path))
   const changed = items ? all : reviewed(all)
   const diffs = await Promise.all(changed.map(async path => {
     const diff = await fileDiff(run, base, head, path)
@@ -105,7 +106,7 @@ export async function buildInput(run: Run, { base, head, rules, items }: { base:
   const files = [...states].map(([path, state]) => (skipped.has(path) ? `=== FILE: ${path} === (не приложен: ${skipped.get(path)})` : `=== FILE: ${path} ===\n${fenced(state.text ?? '')}`)).join('\n\n')
   const sections = [`## RULES\n${rulesText}`, `## DIFF\n${fenced(diffs.join(''), 'diff')}`, `## FILES\n${files}`, ...(items ? [itemsSection(items)] : [])]
   const text = `${sections.join('\n\n')}\n`
-  if (text.length > MAX_INPUT_CHARS) throw new Error(`вход ${text.length} символов больше лимита ${MAX_INPUT_CHARS}: ревью одним запросом не делается, нужно делить PR`)
+  if (text.length > MAX_INPUT_CHARS) throw new Error(`вход ${text.length} символов больше лимита ${MAX_INPUT_CHARS}: в дельте ${changed.length} файл(ов), правила — ${rulesText.length} символов. Ревью одним запросом не делается: разделите PR или проверьте его частями вручную`)
   return text
 }
 

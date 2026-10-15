@@ -52,7 +52,23 @@ test('buildInput: разделы RULES/DIFF/FILES и ITEMS; лимит вход�
   assert.match(text, /## FILES\n=== FILE: a.ts ===\n```\n2\n\n```/)
   assert.match(text, /## ITEMS\n### i1 — a.ts:1 — carol \(stale\)\nпочему 2\?/)
   const huge = new Map([['CLAUDE.md', 'x'.repeat(MAX_INPUT_CHARS)]])
-  await assert.rejects(buildInput(r.run, { base, head, rules: huge }), /вход .* больше лимита/)
+  await assert.rejects(buildInput(r.run, { base, head, rules: huge }), /вход .* больше лимита .*: в дельте 1 файл\(ов\)/)
+})
+
+test('buildInput: scope — только файлы, которые PR меняет от базы', async () => {
+  const r = repo()
+  r.commit('a.ts', '1\n', 'base')
+  r.git('switch', '-qc', 'pr')
+  const base = r.commit('pr.ts', '1\n', 'pr')
+  r.git('switch', '-q', 'main')
+  const scope = r.commit('from-main.ts', 'x\n', 'main came in')
+  r.git('switch', '-q', 'pr'); r.git('merge', '-q', '--no-edit', 'main')
+  const head = r.commit('pr.ts', '2\n', 'pr fix')
+  const text = await buildInput(r.run, { base, head, rules: new Map(), scope })
+  assert.match(text, /=== FILE: pr.ts ===/)
+  assert.doesNotMatch(text, /from-main/)
+  const unscoped = await buildInput(r.run, { base, head, rules: new Map() })
+  assert.match(unscoped, /=== FILE: from-main.ts ===/)
 })
 
 test('buildInput: ревью без файлов .claude/ и со строкой пропуска; triage — с ними', async () => {

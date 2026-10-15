@@ -11,12 +11,12 @@ No `context.json` → tell the user to run `/pr-review <N>` and stop.
 
 ## 1. Review
 
-1. `review_prepare` with `pr`, `kind: "review"`. An answer starting with `review-kit:` → report it, `review_finish`, stop.
+1. `review_prepare` with `pr`, `kind: "review"`. An answer starting with `review-kit:` → report it, `review_finish`, stop. Do not review the changes yourself, give no verdict and offer no publishing — unless the user asks for it in a new message.
 2. `Workflow` with the workflow's `scriptPath` and `args` (a JSON object). This instruction is the user's opt-in to the
    workflow. Wait for its completion notification; do nothing else meanwhile.
 3. `review_collect` with `pr`, `id: "funnel"`, `outputFile` = the notification's `<output-file>`.
 4. The workflow failed, left no output file, or `review_collect` answered `review-kit: …` → report «Ревью агентами не
-   состоялось — не проверено» with that line, never a verdict; `review_finish`, stop.
+   состоялось — не проверено» with that line, never a verdict; `review_finish`, stop. Do not review the changes yourself, give no verdict and offer no publishing — unless the user asks for it in a new message.
 
 ## 2. Report
 
