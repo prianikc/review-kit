@@ -1,6 +1,6 @@
 ---
 name: guide
-description: Use when someone needs a short guide to what a pull request or a commit changes — to understand what they are reviewing (/guide 140, /guide 3edsf3a, «что в этом PR», «что сделано в коммите abc123»). Called by pr-review-run before its report; people, agents and other skills may call it too.
+description: Use when someone needs a short guide to what a pull request or a commit changes — to understand what they are reviewing (/guide 140, /guide 3edsf3a, «что в этом PR», «что сделано в коммите abc123»). Called by pr-review-run while its agents run; people, agents and other skills may call it too.
 argument-hint: "<номер PR | id коммита>"
 ---
 
