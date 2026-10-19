@@ -200,3 +200,11 @@ test('pullRows: строка несёт признак конфликта', asyn
   const fake = fakeProvider({ me: 'alice', pulls: [pull({ number: 1, author: 'alice', conflicted: true }), pull({ number: 2 })] })
   assert.deepEqual((await pullRows(fake)).rows.map(r => [r.number, r.scenario, r.conflicted]), [[1, 'conflict', true], [2, 'review', false]])
 })
+
+test('чужой PR: моё последнее ревью — действующий апрув → дела нет, даже если автор отвечал в старых тредах', () => {
+  const threads = [thread([comment('c1', 'alice', 'null тут', '2026-10-01T10:00:00Z'), comment('c2', 'bob', 'поправил', '2026-10-01T11:00:00Z')])]
+  const approved = data({ reviews: [review('r1', 'alice', 'changes', 'h1'), review('r2', 'alice', 'approved', 'h2', '2026-10-02T10:00:00Z')], threads })
+  assert.equal(scenarioOf(approved), 'wait-author')
+  const dismissed = data({ reviews: [{ ...review('r2', 'alice', 'approved', 'h1', '2026-10-02T10:00:00Z'), dismissed: true }] })
+  assert.equal(scenarioOf(dismissed), 'recheck')
+})
