@@ -162,14 +162,19 @@ export async function planSwitch(run: Run, input: SwitchInput): Promise<SwitchPl
   if (busy && busy !== root) throw new Error(`ветка ${input.headRef} занята worktree ${busy}`)
   const { target, detached } = await fetchHead(run, input)
   const final = !detached && input.own ? await ownFinal(run, input.headRef, target) : target
-  await run(['git', 'fetch', '-q', 'origin', `+refs/heads/${input.baseRef}:refs/remotes/origin/${input.baseRef}`])
-  const hasBase = await hasRef(run, `refs/remotes/origin/${input.baseRef}`)
+  const { base, baseFallback } = await reviewBase(run, { final, baseRef: input.baseRef })
+  return { target, final, base, detached, baseFallback, headRef: input.headRef, own: input.own }
+}
+
+export async function reviewBase(run: Run, { final, baseRef }: { final: string; baseRef: string }): Promise<{ base: string; baseFallback: boolean }> {
+  await run(['git', 'fetch', '-q', 'origin', `+refs/heads/${baseRef}:refs/remotes/origin/${baseRef}`])
+  const hasBase = await hasRef(run, `refs/remotes/origin/${baseRef}`)
   if (!hasBase && (await run(['git', 'fetch', '-q', 'origin', '+refs/heads/main:refs/remotes/origin/main'])).exitCode !== 0) {
-    throw new Error(`на сервере нет ни ветки ${input.baseRef}, ни main`)
+    throw new Error(`на сервере нет ни ветки ${baseRef}, ни main`)
   }
-  const baseTip = hasBase ? `origin/${input.baseRef}` : 'origin/main'
+  const baseTip = hasBase ? `origin/${baseRef}` : 'origin/main'
   const base = (await isAncestor(run, final, baseTip)) ? await mergedBase(run, final, baseTip) : (await gitText(run, ['merge-base', baseTip, final])).trim()
-  return { target, final, base, detached, baseFallback: !hasBase, headRef: input.headRef, own: input.own }
+  return { base, baseFallback: !hasBase }
 }
 
 export async function applySwitch(run: Run, plan: SwitchPlan): Promise<{ head: string; base: string; detached: boolean; baseFallback: boolean }> {

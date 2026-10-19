@@ -6,9 +6,10 @@ import type { ForgeProvider } from './forge/types.ts'
 import { ACTIONABLE, contextOf, OPEN_ALL, placeAll, prMenu, pullRows, rowLine, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type PrContext, type PrData } from './status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, readRules, type TriageItem } from './run/input.ts'
 import { collectFindings, finishTriage, reviewPool, type Finding, type FindingsResult, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
-import { applySwitch, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
+import { applySwitch, fetchHead, reviewBase, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
 import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, parseMessage, reconcile } from './plannotator.ts'
+import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
 import { APPROVABLE, buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, type Texts, type VerdictName } from './run/review.ts'
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
@@ -699,6 +700,24 @@ async function publishReview($: EngineInterface, { pr, ids, from }: { pr: number
   return `published: ${url}${notes.length ? `\n${notes.join('\n')}` : ''}`
 }
 
+async function guideSource($: EngineInterface, target: GuideTarget): Promise<GuideSource> {
+  const run = runner($)
+  if (target.kind === 'commit') return commitSource(run, target.ref)
+  const provider = await forge($)
+  const pull = await provider.getPull(target.number)
+  const active = (await activeRun($)) === pull.number ? await readJson<{ base?: string; head?: string; baseFallback?: boolean }>($, `${await runDir($, pull.number)}/context.json`, {}) : {}
+  if (active.base && active.head) return prSource(pull, { base: active.base, head: active.head, baseFallback: Boolean(active.baseFallback) })
+  const { target: head } = await fetchHead(run, { number: pull.number, headRef: pull.headRef, headSha: pull.headSha, baseRef: pull.baseRef, own: false, pullRef: provider.pullRef(pull.number) })
+  return prSource(pull, { head, ...(await reviewBase(run, { final: head, baseRef: pull.baseRef })) })
+}
+
+async function prepareGuide($: EngineInterface, text: string): Promise<string> {
+  const source = await guideSource($, parseTarget(text))
+  const path = `${await projectRoot($)}/.review-kit/guide/${source.key}.md`
+  await $.fs.write(path, await guideText(runner($), source))
+  return `guide: ${path}\n${source.heading}`
+}
+
 async function publishReplies($: EngineInterface, pr: number): Promise<string> {
   const { dir, context } = await writeContext($, pr)
   if (!context.isOwn || context.state === 'closed') return 'not published: ответы — только в своём открытом PR'
@@ -1045,6 +1064,12 @@ const TOOL_SPECS = [
     isDeferred: false,
   },
   {
+    name: 'guide_prepare',
+    description: 'Prepare the input for a short guide to a PR or a commit: target is a PR number ("140", "#140") or a commit id/ref. Fetches the PR when needed, never switches the tree. Answers "guide: <path>" + the heading line — the file holds the PR description or commit message, commits, stat, notes and the diff; or "review-kit: …" on error.',
+    inputSchema: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'] },
+    isDeferred: false,
+  },
+  {
     name: 'review_finish',
     description: 'Close the active review-kit run for this PR when the review is done.',
     inputSchema: { type: 'object', properties: { pr: { type: 'number' } }, required: ['pr'] },
@@ -1238,6 +1263,14 @@ export const register: Register = (on, options) => {
       return { result: `review-kit: ${(error as Error).message}` }
     }
   }).catch(() => ({ result: 'review-kit: review_tab не выполнен' }))
+
+  on('tool.call', { tool: 'mcp__review-kit__guide_prepare' }, async ($, e) => {
+    try {
+      return { result: await prepareGuide($, String((e as unknown as { target?: unknown }).target ?? '')) }
+    } catch (error) {
+      return { result: `review-kit: ${(error as Error).message}` }
+    }
+  }).catch(() => ({ result: 'review-kit: guide_prepare не выполнен' }))
 
   on('tool.call', { tool: 'mcp__review-kit__review_finish' }, async ($, e) => {
     const { pr } = e as unknown as { pr: number }

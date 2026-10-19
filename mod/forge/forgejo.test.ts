@@ -57,7 +57,7 @@ test('detect: чужие известные хостинги не наши', () 
 test('getPull: маппинг и заголовок авторизации', async () => {
   const { instance, calls } = provider({ [`GET ${API}/pulls/42`]: ok(fixture('pull.json')) })
   assert.deepEqual(await instance.getPull(42), {
-    number: 42, title: 'Добавить экспорт', author: 'Bob', headRef: 'feature/export', headSha: 'aaa111', baseRef: 'main',
+    number: 42, title: 'Добавить экспорт', body: 'Экспорт в CSV', author: 'Bob', headRef: 'feature/export', headSha: 'aaa111', baseRef: 'main',
     state: 'open', merged: false, url: 'https://git.example.org/team/app/pulls/42', conflicted: false,
   })
   assert.equal(calls[0].init?.headers?.Authorization, 'token T')

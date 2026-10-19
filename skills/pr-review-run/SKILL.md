@@ -20,6 +20,10 @@ No `context.json` → tell the user to run `/pr-review <N>` and stop.
 
 ## 2. Report
 
+First the guide, so the user sees what they are reviewing: follow the `review-kit:guide` skill (Skill tool) with target
+`<N>`; it prints the PR description, commits, what was done and the narrow places. Its failure does not stop the review —
+show its `review-kit: …` line and go on. Then the report below.
+
 `findings.json` holds `findings` (confirmed), `belowBar` (confirmed, below the bar), `unconfirmed` (refuted or dropped by
 a check; `mark` says why, `evidence` has C's argument), `dropped` (ids with reasons) and `notChecked`. In Russian, in this
 order:
@@ -54,9 +58,11 @@ Texts: `.review-kit/run/<N>/texts.json` = `{"summary": "<2–4 sentences about t
 1. List every finding of the three groups, one line each: `<id> · <подтверждена | ниже порога | не подтверждена> · <level>
    · <file>:<line> — <problem>`. Ask in text «Какие публикуем? Номера через запятую или «все»» and end the turn.
    No findings at all → skip the list, `ids: []`.
-2. Write `texts.json` with a comment for each chosen id.
+2. Write `texts.json` with a comment for each chosen id. No ids chosen → no `texts.json`: the approval goes out bare —
+   no body and no comments anywhere.
 3. `review_publish` with `pr`, `ids`. The tool picks the verdict from the chosen findings (critical or important → request
-   changes, otherwise approve), shows the review and asks the user itself → section 4.
+   changes, otherwise approve), shows the review and asks the user itself → section 4. An approval without chosen
+   findings is published without any text, whatever `texts.json` says.
 
 ### Plannotator
 
