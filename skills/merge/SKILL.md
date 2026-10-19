@@ -10,7 +10,7 @@ Arguments: `$ARGUMENTS` — the branch to merge in; empty → the default branch
 refs/remotes/origin/HEAD` without `origin/` (fails → `main`).
 
 1. `git rev-parse --show-toplevel` fails → «Не git-репозиторий», stop. `git branch --show-current` is empty → «HEAD
-   отсоединён», stop. The current branch is the one to merge in → «Вы на <branch> — обновить её: /gsync», stop.
+   отсоединён», stop. The current branch is the one to merge in → «Вы на <branch> — обновить её: /gsync (для main — /main)», stop.
 2. `git status --porcelain --untracked-files=no` is not empty, or a merge/rebase is in progress → «В дереве есть
    незакоммиченные изменения — сначала /commit (или закончите merge/rebase)», stop.
 3. `git fetch origin <branch>`. Fails → show git's output, stop.
