@@ -27,4 +27,5 @@ and stop. Ask nothing before the report.
    Blocked if any critical; Changes requested if any important finding or any `open`/`partial` earlier comment; otherwise Approved.
 5. Publish: section 3 of review-kit:pr-review-run; `review_publish` adds the statuses of
    `statuses.json` to the review body itself.
-6. `review_finish`. Every stop of this skill ends with `review_finish`.
+6. `review_finish`. Every stop of this skill ends with `review_finish`. Its `worktree …` line is handled as in section 4
+   of review-kit:pr-review-run.

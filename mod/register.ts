@@ -6,7 +6,7 @@ import type { ForgeProvider } from './forge/types.ts'
 import { ACTIONABLE, contextOf, OPEN_ALL, placeAll, prMenu, pullRows, rowLine, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type PrContext, type PrData } from './status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, readRules, type TriageItem } from './run/input.ts'
 import { collectFindings, finishTriage, reviewPool, type Finding, type FindingsResult, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
-import { applySwitch, fetchHead, reviewBase, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
+import { applySwitch, fetchHead, reviewBase, branchCandidates, createReviewWorktree, excludeFile, withExcluded, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
 import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, parseMessage, reconcile } from './plannotator.ts'
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
@@ -41,6 +41,7 @@ const SCENARIO_TEXT = {
 const GUARD_FAILED = 'review-kit: guard failed — действие отклонено'
 const ORCA_DEFAULT = 'orca.exe'
 const WORKTREES_EXCLUDE = '/.claude/worktrees/'
+const RUN_FILES_EXCLUDE = '/.review-kit/'
 const TABS_FILE = '.claude/worktrees/orca-tabs.json'
 const STATUS_ARGV = ['git', 'status', '--porcelain', '-uno', '--ignore-submodules=all']
 const SUBMIT_ATTEMPTS = 5
@@ -87,8 +88,15 @@ async function runDir($: EngineInterface, pr: number): Promise<string> {
   return `${await projectRoot($)}/.review-kit/run/${pr}`
 }
 
+async function exclude($: EngineInterface, line: string): Promise<void> {
+  const path = await excludeFile(runner($))
+  const text = withExcluded(await $.fs.read(path).then(String, () => ''), line)
+  if (text !== undefined) await $.fs.write(path, text)
+}
+
 async function openRun($: EngineInterface, { pr, context, head, scenario }: { pr: number; context: PrContext; head: string; scenario: RunScenario }): Promise<void> {
   const own = scenario === 'feedback' || scenario === 'fix' || scenario === 'conflict'
+  await exclude($, RUN_FILES_EXCLUDE)
   const path = `${await runDir($, pr)}/session.json`
   const kept = (await readJson<{ roundBase?: string }>($, path, {})).roundBase
   await $.fs.write(path, JSON.stringify({ sessionId: await $.session.id(), status: 'active', ...(own ? { roundBase: kept ?? head } : {}) }))
@@ -717,8 +725,21 @@ async function guideSource($: EngineInterface, target: GuideTarget): Promise<Gui
 async function prepareGuide($: EngineInterface, text: string): Promise<string> {
   const source = await guideSource($, parseTarget(text))
   const path = `${await projectRoot($)}/.review-kit/guide/${source.key}.md`
+  await exclude($, RUN_FILES_EXCLUDE)
   await $.fs.write(path, await guideText(runner($), source))
   return `guide: ${path}\n${source.heading}`
+}
+
+async function dropReviewWorktree($: EngineInterface): Promise<string | undefined> {
+  const run = runner($)
+  if (await inMainTree(run)) return undefined
+  const here = await projectRoot($)
+  const main = await mainRoot($)
+  const fromMain: Run = (argv, init) => run(argv, { cwd: main, ...init })
+  const result = await removeWorktrees(fromMain, [here], { confirmed: false, isActive: isActive($) })
+  if (result.removed.length) return `worktree ${here} удалён — ревью закончено, вкладку можно закрыть; команды в ней больше не работают`
+  const reason = result.skipped[0]?.reason
+  return reason && reason !== 'не worktree ревью' ? `worktree ${here} оставлен (${reason}) — уберёт /pr cleanup` : undefined
 }
 
 async function publishReplies($: EngineInterface, pr: number): Promise<string> {
@@ -846,9 +867,7 @@ async function openTabs($: EngineInterface, prs: number[], { orca, command: slas
   const run = runner($)
   const provider = await forge($)
   const root = (await gitText(run, ['worktree', 'list', '--porcelain'])).split('\n')[0].slice('worktree '.length)
-  const exclude = await excludeFile(run)
-  const excluded = await $.fs.read(exclude).then(String, () => '')
-  if (!excluded.split('\n').includes(WORKTREES_EXCLUDE)) await $.fs.write(exclude, `${excluded}${excluded && !excluded.endsWith('\n') ? '\n' : ''}${WORKTREES_EXCLUDE}\n`)
+  await exclude($, WORKTREES_EXCLUDE)
   const lines: string[] = []
   const here: number[] = []
   for (const number of prs) {
@@ -1074,7 +1093,7 @@ const TOOL_SPECS = [
   },
   {
     name: 'review_finish',
-    description: 'Close the active review-kit run for this PR when the review is done.',
+    description: 'Close the active review-kit run for this PR when the review is done. A review or recheck that ran in its own review worktree (a /pr all tab) also removes that worktree — the answer then says so, and no command works in this tab afterwards.',
     inputSchema: { type: 'object', properties: { pr: { type: 'number' } }, required: ['pr'] },
     isDeferred: false,
   },
@@ -1279,8 +1298,11 @@ export const register: Register = (on, options) => {
     const { pr } = e as unknown as { pr: number }
     if ((await activeRun($)) !== pr) return { result: `not finished: нет активного прогона PR ${pr}` }
 
+    const scenario = (await runFacts($))?.scenario
     await finishRun($, pr, 'done')
-    return { result: await withCleanup($, 'finished', CLEANUP_MIN_BRANCHES_AFTER_RUN) }
+    const text = await withCleanup($, 'finished', CLEANUP_MIN_BRANCHES_AFTER_RUN)
+    const dropped = scenario && READ_ONLY_SCENARIOS.includes(scenario) ? await dropReviewWorktree($).catch(error => `worktree не удалён: ${(error as Error).message} — уберёт /pr cleanup`) : undefined
+    return { result: dropped ? `${text}\n${dropped}` : text }
   })
 
   on('tool.call', { tool: 'mcp__review-kit__review_plannotator' }, async ($, e) => {
