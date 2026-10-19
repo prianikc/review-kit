@@ -33,6 +33,11 @@ test('buildDraft: approve только при одобряемом вердик�
   assert.deepEqual(buildDraft({ selected: [], texts: { comments: {} }, verdict: 'Approved', approve: false, covered: COVERED, capabilities: CAPS }).draft, { verdict: 'comment', body: 'Замечаний нет.', comments: [] })
 })
 
+test('buildDraft: одобрение без находок — без тела и комментариев, даже с summary', () => {
+  assert.deepEqual(buildDraft({ selected: [], texts: { summary: 'Всё хорошо', comments: {} }, verdict: 'Approved', approve: true, covered: COVERED, capabilities: CAPS }).draft, { verdict: 'approve', body: '', comments: [] })
+  assert.equal(buildDraft({ selected: [f('A-1', 'minor')], texts: { summary: 'Итог', comments: { 'A-1': 'x' } }, verdict: 'Approved with comments', approve: true, covered: COVERED, capabilities: CAPS }).draft.body, 'Итог')
+})
+
 test('buildDraft: пустое тело request changes — текст по умолчанию', () => {
   assert.equal(buildDraft({ selected: [f('A-1', 'critical')], texts: { comments: { 'A-1': 'x' } }, verdict: 'Blocked', approve: false, covered: COVERED, capabilities: CAPS }).draft.body, 'Нужны правки — см. комментарии.')
 })

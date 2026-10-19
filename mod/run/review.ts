@@ -59,7 +59,7 @@ export function buildDraft({ selected, texts, verdict, approve, covered, capabil
   const inline = capabilities.inline ? selected.filter(item => covered.get(item.file)?.has(item.line)) : []
   const outside = selected.filter(item => !inline.includes(item))
   const parts = [(texts.summary ?? '').trim(), ...(outside.length ? [`Вне diff:\n${outside.map(item => `- ${item.file}:${item.line} — ${texts.comments[item.id]}`).join('\n')}`] : [])]
-  const body = parts.filter(Boolean).join('\n\n')
+  const body = approve && !selected.length ? '' : parts.filter(Boolean).join('\n\n')
   const comments = inline.map(item => ({ path: item.file, line: item.line, body: texts.comments[item.id] }))
   const draftVerdict = approve ? 'approve' : wantsChanges && capabilities.requestChanges ? 'request-changes' : 'comment'
   const finalBody = body || (draftVerdict === 'request-changes' ? DEFAULT_CHANGES_BODY : !comments.length && draftVerdict !== 'approve' ? DEFAULT_EMPTY_BODY : '')
