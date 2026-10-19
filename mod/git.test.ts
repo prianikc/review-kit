@@ -7,7 +7,7 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { applySwitch, claudeCodeChanges, planSwitch } from './git.ts'
 import { branchCandidates, commitRound, deleteBranches, foreignChanges, headShift, messageProblem, pushRound, reviewStashes, roundState, stashAction } from './git.ts'
-import { createReviewWorktree, reviewed, shellQuote, worktreeName } from './git.ts'
+import { createReviewWorktree, removeWorktrees, reviewed, shellQuote, withExcluded, worktreeName } from './git.ts'
 import { commitMerge, mergeBase, mergeProblem, operationInProgress } from './git.ts'
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -381,4 +381,34 @@ test('commitMerge: слияния нет — отказ без коммита', 
   const { r, roundBase } = ownRound()
   assert.deepEqual(await commitMerge(r.run, { paths: ['a.txt'], message: 'm' }), { ok: false, output: 'слияния нет — в дереве не идёт merge' })
   assert.equal(r.git('rev-parse', 'HEAD'), roundBase)
+})
+
+test('withExcluded: строка добавляется один раз, с переводом строки', () => {
+  assert.equal(withExcluded('', '/.review-kit/'), '/.review-kit/\n')
+  assert.equal(withExcluded('# x', '/.review-kit/'), '# x\n/.review-kit/\n')
+  assert.equal(withExcluded('a\n/.review-kit/\n', '/.review-kit/'), undefined)
+})
+
+test('removeWorktrees: worktree ревью с исключёнными файлами прогона — чистый, удаляется из основного дерева', async () => {
+  const r = repo()
+  const head = r.commit('a.txt', '1\n', 'base')
+  const path = join(r.dir, '.claude/worktrees/pr-7-feature')
+  r.git('worktree', 'add', '-q', '--detach', path, head)
+  writeFileSync(join(r.dir, '.git/info/exclude'), withExcluded('', '/.review-kit/') ?? '')
+  spawnSync('mkdir', ['-p', join(path, '.review-kit/guide')])
+  writeFileSync(join(path, '.review-kit/guide/pr-7.md'), 'гайд')
+  const result = await removeWorktrees(r.run, [path], { confirmed: false, isActive: async () => false })
+  assert.deepEqual(result, { removed: [path], skipped: [] })
+  assert.equal(existsSync(path), false)
+})
+
+test('removeWorktrees: изменения в worktree без подтверждения — пропуск', async () => {
+  const r = repo()
+  const head = r.commit('a.txt', '1\n', 'base')
+  const path = join(r.dir, '.claude/worktrees/pr-8-feature')
+  r.git('worktree', 'add', '-q', '--detach', path, head)
+  writeFileSync(join(path, 'a.txt'), '2\n')
+  const result = await removeWorktrees(r.run, [path], { confirmed: false, isActive: async () => false })
+  assert.deepEqual(result.removed, [])
+  assert.match(result.skipped[0].reason, /есть изменения/)
 })

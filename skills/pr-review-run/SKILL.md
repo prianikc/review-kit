@@ -85,3 +85,6 @@ tell the user to check the PR before anything else; never publish again. Then `r
 
 The user does not want to publish → `review_finish`. Every stop of this skill ends with `review_finish`. Never call curl
 or the hosting API; publishing goes only through `review_publish`.
+
+`review_finish` answers with a `worktree … удалён` line when the review ran in its own worktree (a `/pr all` tab): show
+that line as the last thing and call no tools after it — the tab's tree is gone. A `worktree … оставлен` line → show it.

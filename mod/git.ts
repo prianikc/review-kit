@@ -469,6 +469,11 @@ export async function createReviewWorktree(run: Run, input: { root: string; numb
   return { path, created: !exists, executable, instructions }
 }
 
+export function withExcluded(text: string, line: string): string | undefined {
+  if (text.split('\n').includes(line)) return undefined
+  return `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`
+}
+
 export async function excludeFile(run: Run): Promise<string> {
   return (await gitText(run, ['rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'])).trim()
 }
