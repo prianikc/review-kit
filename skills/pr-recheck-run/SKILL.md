@@ -18,8 +18,8 @@ and stop. Ask nothing before the report.
    - `delta` failed → the report has «Дельта не проверена — <line>» instead of findings and no verdict.
 3. Report in Russian: `Статус: <status>`; «Режим: дельта после моего ревью» (with `note` → «… — <note>») or «Режим: проверено всё — <note>»;
    «Прошлые замечания» — each `prior` item as `<path>:<line>` (or «общее») — закрыто / не закрыто / частично / не проверено —
-   reason; then the findings, «ниже порога» and «Не проверялось» as in section 2 of review-kit:pr-review-run. Verdict:
+   reason; then «Подтверждённые», «Подтверждено, ниже порога», «Не подтверждено» and «Не проверялось» as in section 2 of review-kit:pr-review-run. Verdict:
    Blocked if any critical; Changes requested if any important finding or any `open`/`partial` earlier comment; otherwise Approved.
-4. Publish only when the user asks: section 3 of review-kit:pr-review-run; `review_publish` adds the statuses of
+4. Publish: section 3 of review-kit:pr-review-run; `review_publish` adds the statuses of
    `statuses.json` to the review body itself.
 5. `review_finish`. Every stop of this skill ends with `review_finish`.

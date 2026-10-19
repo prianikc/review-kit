@@ -51,6 +51,7 @@ export interface FindingsResult {
   findings: Finding[]
   belowBar: Finding[]
   dropped: Array<{ id: string; reason: string }>
+  unconfirmed: Finding[]
   notChecked: string[]
 }
 
@@ -165,18 +166,31 @@ function foldDuplicates(kept: Finding[], below: Finding[]): [Finding[], Finding[
   return [values.filter(([, b]) => b === 1).map(([item]) => withoutDuplicate(item)), values.filter(([, b]) => b === 0).map(([item]) => withoutDuplicate(item)), dropped]
 }
 
-function applyThreshold(items: Finding[], table: ThresholdRow[]): [Finding[], Finding[], Array<{ id: string; reason: string }>] {
+function unconfirmedOf(item: Finding, reason: string): Finding {
+  const { duplicateOf: _duplicate, mark: _mark, ...rest } = item
+  return { ...rest, mark: reason.startsWith('refuted:') ? 'опровергнуто' : `отброшено: ${reason}` }
+}
+
+export function reviewPool(result: Pick<FindingsResult, 'findings' | 'belowBar'> & { unconfirmed?: Finding[] }): Finding[] {
+  return [...result.findings, ...result.belowBar.map(item => ({ ...item, mark: item.mark ?? 'ниже порога' })), ...(result.unconfirmed ?? [])]
+}
+
+function applyThreshold(items: Finding[], table: ThresholdRow[]): [Finding[], Finding[], Array<{ id: string; reason: string }>, Finding[]] {
   const kept: Finding[] = []
   const below: Finding[] = []
   const dropped: Array<{ id: string; reason: string }> = []
+  const lost: Finding[] = []
   for (const item of items) {
     const row = table.find(r => r.verdict === item.verdict && r.severity.includes(item.severity) && item.confidence >= r.min)
     const marked = row?.mark ? { ...item, mark: row.mark } : item
-    if (!row) dropped.push({ id: item.id, reason: item.verdict === 'refuted' ? `refuted:${item.evidence}` : `below-threshold:${item.verdict}:${item.severity}:${item.confidence}` })
-    else if (row.result === 'in') kept.push(marked)
+    if (!row) {
+      const reason = item.verdict === 'refuted' ? `refuted:${item.evidence}` : `below-threshold:${item.verdict}:${item.severity}:${item.confidence}`
+      dropped.push({ id: item.id, reason })
+      lost.push(unconfirmedOf(item, reason))
+    }    else if (row.result === 'in') kept.push(marked)
     else below.push(marked)
   }
-  return [kept, below, dropped]
+  return [kept, below, dropped, lost]
 }
 
 function readRaw(raw: unknown): RawFunnel {
@@ -202,22 +216,28 @@ export function collectFindings(input: { raw: unknown; changed: string[]; lineCo
   })
   const valid: Finding[] = []
   const invalid: Array<{ id: string; reason: string }> = []
+  const lost: Finding[] = []
+  const lose = (item: Finding, reason: string) => {
+    invalid.push({ id: item.id, reason })
+    lost.push(unconfirmedOf(item, reason))
+  }
   for (const item of resolved) {
     if (item.verdict === 'refuted') {
-      invalid.push({ id: item.id, reason: `refuted:${item.evidence}` })
+      lose(item, `refuted:${item.evidence}`)
       continue
     }
     const line = item.verdict === 'confirmed' ? evidenceLine(item.evidence, item.file) : null
     const located = line !== null && line >= 1 && line <= (input.lineCounts.get(item.file) ?? 0) ? { ...item, line, lines: [line] } : item
     const checked = checkedItem(located, input.rules, input.changed, input.lineCounts)
-    if ('reason' in checked) invalid.push({ id: item.id, reason: checked.reason })
+    if ('reason' in checked) lose(located, checked.reason)
     else valid.push(checked.item)
   }
-  const [passed, passedBelow, belowDropped] = applyThreshold(valid, input.table)
+  const [passed, passedBelow, belowDropped, belowLost] = applyThreshold(valid, input.table)
   const [folded, below, foldDropped] = foldDuplicates(passed, passedBelow)
   const floor = input.minSeverity ? SEVERITY_RANK[input.minSeverity] : 0
   const findings = folded.filter(item => SEVERITY_RANK[item.severity] >= floor)
   const minDropped = folded.filter(item => SEVERITY_RANK[item.severity] < floor).map(item => ({ id: item.id, reason: `below-${input.minSeverity}` }))
+  const minLost = folded.filter(item => SEVERITY_RANK[item.severity] < floor).map(item => unconfirmedOf(item, `below-${input.minSeverity}`))
   const skipped = [...input.skipped.keys()]
   const notes = [
     ...raw.notChecked.filter(note => !skipped.some(path => note === path || note.startsWith(`${path} `))),
@@ -227,7 +247,7 @@ export function collectFindings(input: { raw: unknown; changed: string[]; lineCo
     ...raw.failed.map(role => `агент ${role} не ответил — угол ${role} не проверен`),
     ...(raw.refuter === 'failed' ? ['агент C не ответил — вердиктов нет'] : []),
   ]
-  return { findings, belowBar: below, dropped: [...invalid, ...belowDropped, ...foldDropped, ...minDropped], notChecked: [...new Set(notes)] }
+  return { findings, belowBar: below, dropped: [...invalid, ...belowDropped, ...foldDropped, ...minDropped], unconfirmed: [...lost, ...belowLost, ...minLost], notChecked: [...new Set(notes)] }
 }
 
 export function finishTriage(raw: unknown, items: Array<{ id: string }>, mode: TriageMode): TriageAnswer[] {

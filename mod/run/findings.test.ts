@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { collectFindings, finishTriage, normalize, type Finding } from './findings.ts'
+import { collectFindings, finishTriage, normalize, reviewPool, type Finding } from './findings.ts'
 
 const TABLE = JSON.parse(readFileSync(new URL('../../config/funnel.json', import.meta.url), 'utf8')).threshold
 const RULE = 'Все экспортируемые функции должны иметь комментарий над объявлением.'
@@ -102,4 +102,21 @@ test('нарушение правила проекта: C не опускает 
   assert.equal(raised.findings[0].severity, 'critical')
   const styleMinor = collectFindings({ ...base, raw: raw([{ ...ruled, severity: 'minor' }], [{ id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — так', severity: 'minor', confidence: 90 }]) })
   assert.equal(styleMinor.belowBar.concat(styleMinor.findings)[0]?.severity ?? 'minor', 'minor')
+})
+
+test('unconfirmed: опровергнутые и отброшенные — с файлом, строкой и проблемой; дубли — нет; пул ревью — все три списка', () => {
+  const result = collectFindings({ ...base, raw: raw([
+    finding({ id: 'A-1' }), finding({ id: 'A-2', file: 'x.ts' }), finding({ id: 'B-1', role: 'quality', line: 4, severity: 'minor', confidence: 40 }),
+    finding({ id: 'B-2', role: 'quality', line: 5 }), finding({ id: 'B-3', role: 'quality', line: 3 }),
+  ], [
+    { id: 'A-1', verdict: 'refuted', evidence: 'src/a.ts:3 — [так] и задумано' },
+    { id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:4 — да', severity: 'minor', confidence: 40 },
+    { id: 'B-2', verdict: 'confirmed', evidence: 'src/a.ts:5 — да', severity: 'important', confidence: 90 },
+    { id: 'B-3', verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'important', confidence: 80, duplicateOf: 'B-2' },
+  ]) })
+  assert.deepEqual(result.unconfirmed.map(f => [f.id, f.file, f.line, f.problem, f.mark]), [
+    ['A-1', 'src/a.ts', 3, 'p', 'опровергнуто'], ['A-2', 'x.ts', 3, 'p', 'отброшено: file-not-in-diff'], ['B-1', 'src/a.ts', 4, 'p', 'отброшено: below-threshold:confirmed:minor:40'],
+  ])
+  assert.equal(result.unconfirmed[0].evidence, 'src/a.ts:3 — [так] и задумано')
+  assert.deepEqual(reviewPool(result).map(f => [f.id, f.mark ?? '']), [['B-2', ''], ['A-1', 'опровергнуто'], ['A-2', 'отброшено: file-not-in-diff'], ['B-1', 'отброшено: below-threshold:confirmed:minor:40']])
 })

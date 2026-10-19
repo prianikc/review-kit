@@ -1,6 +1,6 @@
 ---
 name: pr-review-run
-description: Use when review-kit opened a review run for a PR (.review-kit/run/<N>/context.json exists, scenario review) — review it with the agents and publish when the user asks. Not for own fixes.
+description: Use when review-kit opened a review run for a PR (.review-kit/run/<N>/context.json exists, scenario review) — review it with the agents, report and publish the way the user picks. Not for own fixes.
 ---
 
 # pr-review-run
@@ -20,53 +20,54 @@ No `context.json` → tell the user to run `/pr-review <N>` and stop.
 
 ## 2. Report
 
-In Russian, in this order:
-1. `Статус: <status>` from `context.json`.
-2. The verdict with one line of reason: Blocked if any critical, Changes requested if any important, Approved with comments
-   if only minor, Approved if none.
-3. Each finding: its `id`, `file:line`, level (and its `mark`, if any), the problem, its failure scenario or the rule it breaks.
-4. «Подтверждено, ниже порога», when `belowBar` is not empty: one line each, `<file>:<line> — <problem> · <level> · <confidence>%`
-   (plus ` · <mark>`). These are never published.
-5. «Не проверялось» — always: every `notChecked` entry, the count of `dropped` by reason, and, when `baseFallback` is true,
-   «база ревью взята от main: базовая ветка PR удалена — в diff могут попасть чужие коммиты».
+`findings.json` holds `findings` (confirmed), `belowBar` (confirmed, below the bar), `unconfirmed` (refuted or dropped by
+a check; `mark` says why, `evidence` has C's argument), `dropped` (ids with reasons) and `notChecked`. In Russian, in this
+order:
+1. `Вердикт: <verdict>` with one line of reason, from `findings` only: Blocked if any critical, Changes requested if any
+   important, Approved with comments if only minor, Approved if none.
+2. `Статус: <status>` from `context.json`.
+3. «Подтверждённые» — each of `findings`: `<id> · <level>[ · <mark>] · <file>:<lines>` — the problem; its failure scenario
+   or the rule it breaks.
+4. «Подтверждено, ниже порога» — each of `belowBar` in the same form plus `<confidence>%`.
+5. «Не подтверждено» — each of `unconfirmed` in the same form plus the reason: «опровергнуто: <evidence>» or the `mark`.
+6. «Не проверялось» — every `notChecked` entry, duplicates from `dropped` as «<id> — дубль <id>», and, when `baseFallback`
+   is true, «база ревью взята от main: базовая ветка PR удалена — в diff могут попасть чужие коммиты».
+A section with no entries is left out, except «Не проверялось».
 
 Levels: **critical** — breaks the product, loses data, or is exploitable; **important** — a measurable regression, a
 concrete risk, or a project-rule violation a reviewer would send back; **minor** — style, naming, preference. A finding
 states the problem, not the author. A rule quote stays in the report, never in a published comment.
 
-Own PR (`isOwn`) or closed PR: the report is the result — `review_finish`, stop. A foreign open PR with no findings →
-end with «Апрувим?».
+Own PR (`isOwn`) or closed PR: the report is the result — `review_finish`, stop.
 
-## 3. Publish — only when the user asks
+## 3. Publish
 
-No findings and the user approves → `review_publish` with `pr`, `ids: []`, `approve: true` (the mod asks «Одобрить PR <N>
-без комментариев?» itself) → section 4.
+A foreign open PR: right after the report, AskUserQuestion «Как публикуем ревью PR <N>?» — «Сразу, без Plannotator»,
+«Открыть с аннотациями в Plannotator», «Не публиковать». A prompt saying the user typed `/pr-view` skips the question →
+«Plannotator». «Не публиковать» → section 4.
 
-Otherwise AskUserQuestion «Где разбираем тексты ревью?» — «В чате», «В Plannotator». A prompt saying the user typed `/pr-view`
-skips the question → «In Plannotator».
+Texts: `.review-kit/run/<N>/texts.json` = `{"summary": "<2–4 sentences about the problem, not the author>", "comments":
+{"<id>": "<comment in Russian>"}}`.
 
-### In chat
+### Directly
 
-1. The user names the findings to publish (or «все»). Write `.review-kit/run/<N>/texts.json` =
-   `{"summary": "<2–4 sentences about the problem, not the author; never mentions belowBar>", "comments": {"<id>": "<comment in Russian>"}}`,
-   one comment per selected id.
-2. Show the summary and every draft (`id`, `file:line`, text); apply the user's edits to `texts.json` until they say it is ready.
-3. `review_publish` with `pr`, `ids`, and `approve: true` only if the verdict is Approved or Approved with comments and the
-   user wants to approve. The tool shows the review and asks the user itself → section 4.
+1. List every finding of the three groups, one line each: `<id> · <подтверждена | ниже порога | не подтверждена> · <level>
+   · <file>:<line> — <problem>`. Ask in text «Какие публикуем? Номера через запятую или «все»» and end the turn.
+   No findings at all → skip the list, `ids: []`.
+2. Write `texts.json` with a comment for each chosen id.
+3. `review_publish` with `pr`, `ids`. The tool picks the verdict from the chosen findings (critical or important → request
+   changes, otherwise approve), shows the review and asks the user itself → section 4.
 
-### In Plannotator
+### Plannotator
 
-1. Write `texts.json` as in «In chat» step 1 for **every** finding; do not show the drafts in chat.
-2. `review_plannotator` with `pr`. `unavailable: …` → show it and ask «Разобрать в чате?»; yes → «In chat»; no →
-   `review_finish`, stop.
-3. `started: …` → tell the user the URL, and that a rewritten comment must keep its first line `[id · …]`. End the turn and
-   do nothing until a message «Plannotator result for PR <N>: …» arrives.
-4. On it: `failed` → as step 2 `unavailable`. Read `.review-kit/run/<N>/plannotator/result.json` with Read (never `cd` into the
-   run folder: `review_finish` deletes it):
-   - `dismissed` → «Ревью не публикуется: Plannotator закрыт без решения» → `review_finish`, stop;
-   - empty `ids` and an empty `summary` in `plannotator/texts.json` → «Публиковать нечего» → `review_finish`, stop;
-   - otherwise show the summary and every comment of `plannotator/texts.json` (`h…` ids are the human's own; edits the user
-     asks for go into that file first), then `review_publish` with `pr`, `ids` from result.json, `from: "plannotator"` → section 4.
+1. Write `texts.json` with a comment for every finding of the three groups; do not show the drafts in chat.
+2. `review_plannotator` with `pr`. `unavailable: …` → show it and go to «Directly».
+3. `started: …` → tell the user the URL: «Отправить аннотации» — запросить изменения с ними, «Approve» — одобрить (оставшиеся
+   аннотации уйдут комментариями), a rewritten comment keeps its first line `[id · …]`. End the turn and do nothing until a
+   message «Plannotator result for PR <N>: …» arrives.
+4. On it: `failed` → show the reason and go to «Directly». `dismissed` → «Ревью не публикуется: Plannotator закрыт без
+   решения» → section 4. Otherwise `review_publish` with `pr`, `ids` from `.review-kit/run/<N>/plannotator/result.json`
+   (read it with Read; never `cd` into the run folder), `from: "plannotator"` — it publishes without asking → section 4.
 
 ## 4. Finish
 

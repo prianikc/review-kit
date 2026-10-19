@@ -5,11 +5,11 @@ import { ADAPTERS, createProvider, selectProvider, withTimeout, type ExplicitCon
 import type { ForgeProvider } from './forge/types.ts'
 import { ACTIONABLE, contextOf, OPEN_ALL, placeAll, prMenu, pullRows, rowLine, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type PrContext, type PrData } from './status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, readRules, type TriageItem } from './run/input.ts'
-import { collectFindings, finishTriage, type Finding, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
+import { collectFindings, finishTriage, reviewPool, type Finding, type FindingsResult, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
 import { applySwitch, branchCandidates, createReviewWorktree, excludeFile, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
 import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, parseMessage, reconcile } from './plannotator.ts'
-import { buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, type Texts } from './run/review.ts'
+import { APPROVABLE, buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, type Texts, type VerdictName } from './run/review.ts'
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
@@ -669,12 +669,16 @@ async function readJson<T>($: EngineInterface, path: string, fallback: T): Promi
   return $.fs.read(path).then(text => JSON.parse(String(text)) as T, () => fallback)
 }
 
-async function publishReview($: EngineInterface, { pr, ids, approve, from }: { pr: number; ids: string[] | 'all'; approve?: boolean; from?: 'chat' | 'plannotator' }): Promise<string> {
+async function publishReview($: EngineInterface, { pr, ids, from }: { pr: number; ids: string[] | 'all'; from?: 'chat' | 'plannotator' }): Promise<string> {
   const { dir, context } = await writeContext($, pr)
   if (context.isOwn || context.state === 'closed') return 'not published: свой или закрытый PR не публикуется — только отчёт'
-  const source = from === 'plannotator' ? `${dir}/plannotator` : dir
-  const findings = (await readJson<{ findings: Finding[] }>($, `${source}/findings.json`, { findings: [] })).findings
+  const plannotator = from === 'plannotator'
+  const source = plannotator ? `${dir}/plannotator` : dir
+  const stored = await readJson<FindingsResult>($, `${source}/findings.json`, { findings: [], belowBar: [], dropped: [], unconfirmed: [], notChecked: [] })
+  const findings = plannotator ? stored.findings : reviewPool(stored)
   const texts = await readJson<Texts>($, `${source}/texts.json`, { comments: {} })
+  const decision = plannotator ? (await readJson<{ decision?: string }>($, `${source}/result.json`, {})).decision : undefined
+  if (plannotator && decision !== 'approved' && decision !== 'annotated') return 'not published: нет решения Plannotator (approved или annotated)'
   const wanted = ids === 'all' ? findings.map(item => item.id) : ids
   const unknown = wanted.filter(id => !findings.some(item => item.id === id))
   if (unknown.length) return `not published: нет находки: ${unknown.join(', ')}`
@@ -685,15 +689,12 @@ async function publishReview($: EngineInterface, { pr, ids, approve, from }: { p
   const summary = [texts.summary?.trim() ?? '', ...(statuses.length ? [statusesBlock(statuses, prior)] : [])].filter(Boolean).join('\n\n')
   const provider = await forge($)
   const covered = parseCovered(await gitText(runner($), ['diff', '-U0', '--no-color', '--no-renames', context.base, context.head]))
-  const verdict = verdictName(selected, statuses)
-  const { draft, notes } = buildDraft({ selected, texts: { ...texts, summary }, verdict, approve: approve === true, covered, capabilities: provider.capabilities })
+  const verdict: VerdictName = decision === 'annotated' ? 'Changes requested' : decision === 'approved' ? (selected.length ? 'Approved with comments' : 'Approved') : verdictName(selected, statuses)
+  const { draft, notes } = buildDraft({ selected, texts: { ...texts, summary }, verdict, approve: APPROVABLE.includes(verdict), covered, capabilities: provider.capabilities })
   const bare = draft.verdict === 'approve' && !draft.body.trim() && draft.comments.length === 0
   const inline = draft.comments.map(c => `• ${c.path}:${c.line} — ${c.body}`).join('\n')
   const question = bare ? `Одобрить PR ${pr} без комментариев?` : `Публикуем ревью PR ${pr} (${verdict})?\n\n${draft.body}\n\n${inline}`.slice(0, CONFIRM_TEXT_LIMIT)
-  if ((await $.ui.ask(question, ['Да', 'Нет']).catch(() => 'Нет')) !== 'Да') return 'not published: пользователь отказал'
-  if (!bare && draft.verdict === 'approve' && (await $.ui.ask(`Одобрить PR ${pr}?`, ['Да', 'Нет']).catch(() => 'Нет')) !== 'Да') {
-    return 'not published: одобрение отклонено — вызовите review_publish без approve'
-  }
+  if (!plannotator && (await $.ui.ask(question, ['Да', 'Нет']).catch(() => 'Нет')) !== 'Да') return 'not published: пользователь отказал'
   const { url } = await provider.publishReview(pr, draft)
   return `published: ${url}${notes.length ? `\n${notes.join('\n')}` : ''}`
 }
@@ -882,7 +883,7 @@ async function settlePlannotator($: EngineInterface, { pr, dir, stdout, code }: 
   if (run?.pr !== pr || run.status !== 'active') return
 
   if (child.mode === 'fix') return settleFix($, { pr, dir, stdout, code })
-  if (code !== 0) return wake($, `Plannotator result for PR ${pr}: failed — Plannotator завершился с кодом ${code}. Continue review-kit:pr-review-run, «In Plannotator» step 4.`)
+  if (code !== 0) return wake($, `Plannotator result for PR ${pr}: failed — Plannotator завершился с кодом ${code}. Continue review-kit:pr-review-run, «Plannotator» step 4.`)
   await $.fs.write(`${dir}/plannotator/decision.out`, stdout)
   try {
     const record = decisionOf(stdout)
@@ -892,9 +893,9 @@ async function settlePlannotator($: EngineInterface, { pr, dir, stdout, code }: 
     await $.fs.write(`${dir}/plannotator/texts.json`, JSON.stringify(result.texts, null, 2))
     await $.fs.write(`${dir}/plannotator/findings.json`, JSON.stringify({ findings: result.findings }, null, 2))
     await $.fs.write(`${dir}/plannotator/result.json`, JSON.stringify({ decision: record.decision, ids: result.ids }, null, 2))
-    wake($, `Plannotator result for PR ${pr}: ${record.decision}, ids ${result.ids.join(',') || '—'}. Continue review-kit:pr-review-run, «In Plannotator» step 4: .review-kit/run/${pr}/plannotator/result.json`)
+    wake($, `Plannotator result for PR ${pr}: ${record.decision}, ids ${result.ids.join(',') || '—'}. Continue review-kit:pr-review-run, «Plannotator» step 4: .review-kit/run/${pr}/plannotator/result.json`)
   } catch (error) {
-    wake($, `Plannotator result for PR ${pr}: failed — ${(error as Error).message}. Continue review-kit:pr-review-run, «In Plannotator» step 4.`)
+    wake($, `Plannotator result for PR ${pr}: failed — ${(error as Error).message}. Continue review-kit:pr-review-run, «Plannotator» step 4.`)
   }
 }
 
@@ -927,7 +928,7 @@ async function watchPlannotator($: EngineInterface, { pr, dir, stream }: { pr: n
 }
 
 async function reviewAnnotations($: EngineInterface, dir: string): Promise<string> {
-  const findings = (JSON.parse(String(await $.fs.read(`${dir}/findings.json`))) as { findings: Finding[] }).findings
+  const findings = reviewPool(JSON.parse(String(await $.fs.read(`${dir}/findings.json`))) as FindingsResult)
   const texts = JSON.parse(String(await $.fs.read(`${dir}/texts.json`))) as Texts
   await $.fs.write(`${dir}/plannotator/items.json`, JSON.stringify(findings, null, 2))
   return JSON.stringify(annotations(findings, texts))
@@ -937,9 +938,9 @@ async function viewFindings($: EngineInterface): Promise<string> {
   const run = await runFacts($)
   if (run?.pr === undefined || run.status !== 'active') return 'Идущего ревью нет — находки показываются только внутри прогона: /pr-review <номер>.'
   if ((run.scenario ?? 'review') !== 'review' || run.isOwn || run.state === 'closed') return `Прогон PR ${run.pr} — не ревью чужого открытого PR: в Plannotator открывать нечего.`
-  const findings = (await readJson<{ findings: Finding[] }>($, `${await runDir($, run.pr)}/findings.json`, { findings: [] })).findings
-  if (findings.length === 0) return `В ревью PR ${run.pr} пока нет находок — открывать нечего.`
-  submitLater($, `Use the review-kit:pr-review-run skill for PR ${run.pr}: the user typed /pr-view — go straight to section 3 «In Plannotator».`, SUBMIT_ATTEMPTS)
+  const stored = await readJson<FindingsResult | undefined>($, `${await runDir($, run.pr)}/findings.json`, undefined)
+  if (!stored) return `В ревью PR ${run.pr} пока нет находок — открывать нечего.`
+  submitLater($, `Use the review-kit:pr-review-run skill for PR ${run.pr}: the user typed /pr-view — go straight to section 3 «Plannotator».`, SUBMIT_ATTEMPTS)
   return `Открываю находки PR ${run.pr} в Plannotator.`
 }
 
@@ -991,8 +992,8 @@ async function startPlannotator($: EngineInterface, pr: number, mode: Plannotato
 const TOOL_SPECS = [
   {
     name: 'review_publish',
-    description: 'Publish the review of the active review-kit run: findings by ids (or "all") from findings.json with texts from texts.json (from: "plannotator" — the Plannotator result). The tool asks the user itself and publishes only on «Да». approve: true — ask to approve (only for Approved / Approved with comments). Answers "published: <url>" or "not published: …".',
-    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, ids: { oneOf: [{ const: 'all' }, { type: 'array', items: { type: 'string' } }] }, approve: { type: 'boolean' }, from: { enum: ['chat', 'plannotator'] } }, required: ['pr', 'ids'] },
+    description: 'Publish the review of the active review-kit run: findings by ids (or "all") — confirmed, below the bar or unconfirmed — with texts from texts.json. From chat the verdict follows the selected findings (critical/important → request changes, otherwise approve) and the tool asks the user itself, publishing only on «Да». from: "plannotator" publishes the Plannotator result without asking: annotated → request changes, approved → approve. Answers "published: <url>" or "not published: …".',
+    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, ids: { oneOf: [{ const: 'all' }, { type: 'array', items: { type: 'string' } }] }, from: { enum: ['chat', 'plannotator'] } }, required: ['pr', 'ids'] },
     isDeferred: false,
   },
   {
@@ -1198,7 +1199,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'mcp__review-kit__review_publish' }, async ($, e) => {
     try {
-      return { result: await publishReview($, e as unknown as { pr: number; ids: string[] | 'all'; approve?: boolean; from?: 'chat' | 'plannotator' }) }
+      return { result: await publishReview($, e as unknown as { pr: number; ids: string[] | 'all'; from?: 'chat' | 'plannotator' }) }
     } catch (error) {
       return { result: `review-kit: ${(error as Error).message}` }
     }

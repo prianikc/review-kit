@@ -2,7 +2,7 @@ import type { Reply, ReviewDraft } from '../forge/types.ts'
 import { MARKER, type IntakeItem } from '../status.ts'
 import type { Finding } from './findings.ts'
 
-const APPROVABLE: readonly VerdictName[] = ['Approved', 'Approved with comments']
+export const APPROVABLE: readonly VerdictName[] = ['Approved', 'Approved with comments']
 const DEFAULT_CHANGES_BODY = 'Нужны правки — см. комментарии.'
 const DEFAULT_EMPTY_BODY = 'Замечаний нет.'
 const UNRESOLVED = ['open', 'partial']

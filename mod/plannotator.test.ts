@@ -59,12 +59,13 @@ test('reconcile: dismissed — ничего', () => {
   assert.deepEqual(reconcile('dismissed', parseMessage(MESSAGE), [A1], TEXTS).ids, [])
 })
 
-test('reconcile: approved — неупомянутые находки идут с исходными текстами, и без правок, и с общей заметкой', () => {
+test('reconcile: approved — только пришедшие аннотации; без них — пусто', () => {
   const plain = reconcile('approved', parseMessage(''), [A1, B1], TEXTS)
-  assert.deepEqual([plain.ids, plain.texts], [['A-1', 'B-1'], TEXTS])
+  assert.deepEqual([plain.ids, plain.texts], [[], { summary: '', comments: {} }])
   const noted = reconcile('approved', parseMessage('# Code Review Feedback\nВ целом ок'), [A1, B1], TEXTS)
-  assert.deepEqual(noted.ids, ['A-1', 'B-1'])
-  assert.equal(noted.texts.summary, 'Итог\n\nВ целом ок')
+  assert.deepEqual([noted.ids, noted.texts.summary], [[], 'В целом ок'])
+  const kept = reconcile('approved', parseMessage(MESSAGE), [A1, B1], TEXTS)
+  assert.deepEqual(kept.ids, reconcile('annotated', parseMessage(MESSAGE), [A1, B1], TEXTS).ids)
 })
 
 test('similarity: как difflib ratio на простых строках', () => {
