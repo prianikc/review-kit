@@ -28,16 +28,17 @@ export function parseTarget(text: string): GuideTarget {
   return { kind: 'commit', ref: target }
 }
 
-export function prSource(pull: PullRequest, { base, head, baseFallback }: { base: string; head: string; baseFallback: boolean }): GuideSource {
+export function prSource(pull: PullRequest, { base, head, baseFallback, recheck }: { base: string; head: string; baseFallback: boolean; recheck?: { mode: string; note?: string } }): GuideSource {
   const state = pull.merged ? 'влит' : pull.state === 'closed' ? 'закрыт' : ''
+  const delta = recheck?.mode === 'delta'
   return {
-    key: `pr-${pull.number}`,
-    heading: `PR ${pull.number} · ${pull.title} · ${pull.author} · ${pull.baseRef} ← ${pull.headRef}${state ? ` · ${state}` : ''}`,
+    key: `pr-${pull.number}${delta ? '-delta' : ''}`,
+    heading: `PR ${pull.number} · ${pull.title} · ${pull.author} · ${pull.baseRef} ← ${pull.headRef}${state ? ` · ${state}` : ''}${delta ? ' · изменения после моего ревью' : ''}`,
     url: pull.url,
     message: (pull.body ?? '').trim(),
     base,
     head,
-    notes: baseFallback ? ['база взята от main: базовая ветка PR удалена — в diff могут попасть чужие коммиты'] : [],
+    notes: [...(baseFallback ? ['база взята от main: базовая ветка PR удалена — в diff могут попасть чужие коммиты'] : []), ...(recheck?.note ? [recheck.note] : [])],
   }
 }
 

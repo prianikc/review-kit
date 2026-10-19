@@ -705,7 +705,10 @@ async function guideSource($: EngineInterface, target: GuideTarget): Promise<Gui
   if (target.kind === 'commit') return commitSource(run, target.ref)
   const provider = await forge($)
   const pull = await provider.getPull(target.number)
-  const active = (await activeRun($)) === pull.number ? await readJson<{ base?: string; head?: string; baseFallback?: boolean }>($, `${await runDir($, pull.number)}/context.json`, {}) : {}
+  const dir = await runDir($, pull.number)
+  const active = (await activeRun($)) === pull.number ? await readJson<{ base?: string; head?: string; baseFallback?: boolean; scenario?: string }>($, `${dir}/context.json`, {}) : {}
+  const recheck = active.scenario === 'recheck' ? await readJson<{ base?: string; mode?: string; note?: string }>($, `${dir}/recheck.json`, {}) : {}
+  if (active.head && recheck.base && recheck.mode) return prSource(pull, { base: recheck.base, head: active.head, baseFallback: Boolean(active.baseFallback), recheck: { mode: recheck.mode, note: recheck.note } })
   if (active.base && active.head) return prSource(pull, { base: active.base, head: active.head, baseFallback: Boolean(active.baseFallback) })
   const { target: head } = await fetchHead(run, { number: pull.number, headRef: pull.headRef, headSha: pull.headSha, baseRef: pull.baseRef, own: false, pullRef: provider.pullRef(pull.number) })
   return prSource(pull, { head, ...(await reviewBase(run, { final: head, baseRef: pull.baseRef })) })

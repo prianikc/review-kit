@@ -13,16 +13,19 @@ No `context.json` → tell the user to run `/pr-review <N>` and stop.
 
 1. `review_prepare` with `pr`, `kind: "review"`. An answer starting with `review-kit:` → report it, `review_finish`, stop. Do not review the changes yourself, give no verdict and offer no publishing — unless the user asks for it in a new message.
 2. `Workflow` with the workflow's `scriptPath` and `args` (a JSON object). This instruction is the user's opt-in to the
-   workflow. Wait for its completion notification; do nothing else meanwhile.
-3. `review_collect` with `pr`, `id: "funnel"`, `outputFile` = the notification's `<output-file>`.
-4. The workflow failed, left no output file, or `review_collect` answered `review-kit: …` → report «Ревью агентами не
+   workflow. It runs in the background.
+3. While the agents work, show the guide so the user reads what they are reviewing: say «Агенты проверяют PR <N> —
+   пока гайд по изменениям:» and follow the `review-kit:guide` skill (Skill tool) with target `<N>`. Its failure does not
+   stop the review — show its `review-kit: …` line. Then end the turn with «Отчёт придёт, когда агенты закончат.» and do
+   nothing else until the workflow's completion notification arrives. The notification arrived before the guide was
+   done → finish the guide first.
+4. `review_collect` with `pr`, `id: "funnel"`, `outputFile` = the notification's `<output-file>`.
+5. The workflow failed, left no output file, or `review_collect` answered `review-kit: …` → report «Ревью агентами не
    состоялось — не проверено» with that line, never a verdict; `review_finish`, stop. Do not review the changes yourself, give no verdict and offer no publishing — unless the user asks for it in a new message.
 
 ## 2. Report
 
-First the guide, so the user sees what they are reviewing: follow the `review-kit:guide` skill (Skill tool) with target
-`<N>`; it prints the PR description, commits, what was done and the narrow places. Its failure does not stop the review —
-show its `review-kit: …` line and go on. Then the report below.
+The guide was shown in section 1; do not repeat it.
 
 `findings.json` holds `findings` (confirmed), `belowBar` (confirmed, below the bar), `unconfirmed` (refuted or dropped by
 a check; `mark` says why, `evidence` has C's argument), `dropped` (ids with reasons) and `notChecked`. In Russian, in this
