@@ -9,10 +9,11 @@ argument-hint: "<номер PR | id коммита>"
 Target: `$ARGUMENTS` (or the target the caller named) — a PR number (`140`, `#140`) or a commit id or ref. No target →
 ask in text «Какой PR или коммит?» and end the turn.
 
-This is a guide, not a review: no verdict, no levels, no publishing, no files written, no tree switching.
+This is a guide, not a review: no verdict, no levels, no publishing, no tree switching, and no files written except the
+`hotspots` file of step 4.
 
 1. `guide_prepare` with `target`. An answer starting with `review-kit:` → show it and stop.
-2. The answer is `guide: <path>` and the heading line. Read the whole file with Read (in parts when it is long): the
+2. The answer is `guide: <path>`, the heading line and, inside a review or recheck run of that PR, `hotspots: <path>`. Read the whole file with Read (in parts when it is long): the
    heading and URL, `MESSAGE` (PR description or commit message), `COMMITS`, `STAT`, `NOTES` and `DIFF`.
 3. Write the guide in Russian, right in the chat, short enough to fit one screen:
    - **Heading** — the heading line, then the URL when there is one.
@@ -26,4 +27,7 @@ This is a guide, not a review: no verdict, no levels, no publishing, no files wr
      stands out → «не видно». These are pointers for the reader, not findings.
    - «Размер» — one line from `STAT`: files, `+added −removed`. Every `NOTES` entry follows; a file whose diff was not
      attached is named as not covered by the guide.
-4. Called from another skill or by an agent → the guide is your whole output for this step; return to the caller.
+4. The answer had `hotspots: <path>` → write that file with Write: `{"items": [{"file": "<path from the repository
+   root>", "line": <line in the PR's version of the file>, "text": "<the bullet's what and why, in Russian>"}]}`, one
+   item per «Узкие места» bullet (none → `{"items": []}`). The review may offer them as Plannotator annotations.
+5. Called from another skill or by an agent → the guide is your whole output for this step; return to the caller.

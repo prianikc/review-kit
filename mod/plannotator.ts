@@ -2,6 +2,8 @@ import type { Finding } from './run/findings.ts'
 import type { Texts } from './run/review.ts'
 
 const LEVEL: Record<string, string> = { critical: 'Critical', important: 'Important', minor: 'Minor' }
+const HOTSPOT = 'узкое место гайда'
+const HOTSPOT_HEADER = /^\[g\d+ · узкое место гайда\]$/
 const HEADER = /^\[(?<id>[^\s·\]]+) · (?:Critical|Important|Minor)(?: · \d{1,3}%)?(?: · [^\]]*)?\]$/
 const FILE_HEADING = /^## (?!#)(\S.*)$/
 const LINE_HEADING = /^### Line (\d+)(?:-\d+)? \((new|old)\)$/
@@ -30,6 +32,22 @@ export function annotations(findings: Finding[], texts: Texts): { source: string
   const missing = findings.filter(item => !(item.id in texts.comments)).map(item => item.id)
   if (missing.length) throw new Error(`нет текста для: ${missing.join(', ')}`)
   return { source: SOURCE, annotations: findings.map(item => ({ source: SOURCE, filePath: item.file, lineStart: item.line, lineEnd: item.line, text: `${header(item)}\n${texts.comments[item.id]}` })) }
+}
+
+export interface Hotspot {
+  file: string
+  line: number
+  text: string
+}
+
+type Annotation = { source: string; filePath: string; lineStart: number; lineEnd: number; text: string }
+
+export function hotspotAnnotations(items: Hotspot[], lineCounts: Map<string, number>): { annotations: Annotation[]; skipped: string[] } {
+  const fits = (item: Hotspot) => Number.isInteger(item.line) && item.line >= 1 && item.line <= (lineCounts.get(item.file) ?? 0) && item.text.trim() !== ''
+  return {
+    annotations: items.flatMap((item, index) => (fits(item) ? [{ source: SOURCE, filePath: item.file, lineStart: item.line, lineEnd: item.line, text: `[g${index + 1} · ${HOTSPOT}]\n${item.text.trim()}` }] : [])),
+    skipped: items.filter(item => !fits(item)).map(item => `${item.file}:${item.line}`),
+  }
 }
 
 export function decisionOf(stdout: string): { decision: Decision; message?: string } {
@@ -117,6 +135,7 @@ export function reconcile(decision: Decision, parsed: { items: ParsedItem[]; gen
   const extra: Finding[] = []
   const body = [...parsed.general]
   for (const item of parsed.items) {
+    if (HOTSPOT_HEADER.test(item.text.split('\n')[0].trim())) continue
     if (item.side === 'file') { body.push(`- ${item.file} — ${item.text}`); continue }
     if (item.side === 'old') { body.push(`- ${item.file}:${item.line} (до изменения) — ${item.text}`); continue }
     const [first, ...rest] = item.text.split('\n')

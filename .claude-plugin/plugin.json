@@ -1,6 +1,6 @@
 {
   "name": "review-kit",
-  "version": "3.12.0",
+  "version": "3.14.0",
   "description": "Ревью PR воронкой агентов, разбор замечаний к своему PR, раунд правок и перепроверка — в текущей вкладке",
   "author": { "name": "prianikc" },
   "types": "./types/index.d.ts",

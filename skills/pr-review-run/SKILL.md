@@ -50,8 +50,10 @@ Own PR (`isOwn`) or closed PR: the report is the result — `review_finish`, sto
 ## 3. Publish
 
 A foreign open PR: right after the report, AskUserQuestion «Как публикуем ревью PR <N>?» — «Сразу, без Plannotator»,
-«Открыть с аннотациями в Plannotator», «Не публиковать». A prompt saying the user typed `/pr-view` skips the question →
-«Plannotator». «Не публиковать» → section 4.
+«Открыть с аннотациями в Plannotator», «Не публиковать». When `.review-kit/run/<N>/hotspots.json` has items (the guide's
+narrow places), the Plannotator option splits in two: «Plannotator: только находки» and «Plannotator: находки и узкие
+места гайда». A prompt saying the user typed `/pr-view` skips the question → «Plannotator» with findings only.
+«Не публиковать» → section 4.
 
 Texts: `.review-kit/run/<N>/texts.json` = `{"summary": "<2–4 sentences about the problem, not the author>", "comments":
 {"<id>": "<comment in Russian>"}}`.
@@ -70,10 +72,14 @@ Texts: `.review-kit/run/<N>/texts.json` = `{"summary": "<2–4 sentences about t
 ### Plannotator
 
 1. Write `texts.json` with a comment for every finding of the three groups; do not show the drafts in chat.
-2. `review_plannotator` with `pr`. `unavailable: …` → show it and go to «Directly».
+2. `review_plannotator` with `pr`, and `hotspots: true` when the user chose the narrow places too. `unavailable: …` → show
+   it and go to «Directly».
 3. `started: …` → tell the user the URL: «Отправить аннотации» — запросить изменения с ними, «Approve» — одобрить (оставшиеся
-   аннотации уйдут комментариями), a rewritten comment keeps its first line `[id · …]`. End the turn and do nothing until a
-   message «Plannotator result for PR <N>: …» arrives.
+   аннотации уйдут комментариями), a rewritten comment keeps its first line `[id · …]`. With narrow places also: they are
+   hints for reading, headed `[gN · узкое место гайда]`, and never published while that line stays — to publish one as
+   your own comment, delete that line. End the turn and do nothing until a message «Plannotator result for PR <N>: …»
+   arrives. The user asks meanwhile to add the guide's narrow places → `review_plannotator` with `pr`, `hotspots: true`
+   (it adds them to the open session), show its line, end the turn again.
 4. On it: `failed` → show the reason and go to «Directly». `dismissed` → «Ревью не публикуется: Plannotator закрыт без
    решения» → section 4. Otherwise `review_publish` with `pr`, `ids` from `.review-kit/run/<N>/plannotator/result.json`
    (read it with Read; never `cd` into the run folder), `from: "plannotator"` — it publishes without asking → section 4.
