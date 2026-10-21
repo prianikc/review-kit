@@ -2,7 +2,8 @@ import { binaryFiles, changedFiles, fileDiff, reviewed, showFile, treeEntries, t
 
 export const MAX_FILE_CHARS = 60_000
 export const DELETED = 'удалён'
-export const MAX_INPUT_CHARS = 500_000
+export const MAX_INPUT_CHARS = 250_000
+const MODEL_INPUT_CHARS: Record<string, number> = { opus: 500_000 }
 export const B_SKIPPED = 'агент B не запускался: для его работы нужны правила и соглашения проекта (CLAUDE.md, AGENTS.md, .claude/rules, .cursor/rules, .github/copilot-instructions.md)'
 const RULE_NAMES = ['CLAUDE.md', 'AGENTS.md']
 const RULE_DIRS = ['.claude/rules/', '.cursor/rules/']
@@ -91,7 +92,11 @@ export async function readRules(run: Run, { rev, base, head }: { rev: string; ba
   return { rules, changedRules: changed.filter(isRulePath) }
 }
 
-export async function buildInput(run: Run, { base, head, rules, items, scope }: { base: string; head: string; rules: Map<string, string>; items?: TriageItem[]; scope?: string }): Promise<string> {
+export function inputLimit(model?: string): number {
+  return MODEL_INPUT_CHARS[model ?? ''] ?? MAX_INPUT_CHARS
+}
+
+export async function buildInput(run: Run, { base, head, rules, items, scope, model }: { base: string; head: string; rules: Map<string, string>; items?: TriageItem[]; scope?: string; model?: string }): Promise<string> {
   const rulesText = [...rules].map(([path, text]) => `=== RULE FILE: ${path} ===\n${fenced(text)}`).join('\n\n')
   const inPr = scope ? new Set(await changedFiles(run, scope, head)) : undefined
   const all = (await changedFiles(run, base, head)).filter(path => !inPr || inPr.has(path))
@@ -106,7 +111,8 @@ export async function buildInput(run: Run, { base, head, rules, items, scope }: 
   const files = [...states].map(([path, state]) => (skipped.has(path) ? `=== FILE: ${path} === (не приложен: ${skipped.get(path)})` : `=== FILE: ${path} ===\n${fenced(state.text ?? '')}`)).join('\n\n')
   const sections = [`## RULES\n${rulesText}`, `## DIFF\n${fenced(diffs.join(''), 'diff')}`, `## FILES\n${files}`, ...(items ? [itemsSection(items)] : [])]
   const text = `${sections.join('\n\n')}\n`
-  if (text.length > MAX_INPUT_CHARS) throw new Error(`вход ${text.length} символов больше лимита ${MAX_INPUT_CHARS}: в дельте ${changed.length} файл(ов), правила — ${rulesText.length} символов. Ревью одним запросом не делается: разделите PR или проверьте его частями вручную`)
+  const limit = inputLimit(model)
+  if (text.length > limit) throw new Error(`вход ${text.length} символов больше лимита ${limit}${model ? ` для модели ${model}` : ''}${limit < inputLimit('opus') ? ` (у opus — ${inputLimit('opus')})` : ''}: в дельте ${changed.length} файл(ов), правила — ${rulesText.length} символов. Ревью одним запросом не делается: разделите PR или проверьте его частями вручную`)
   return text
 }
 

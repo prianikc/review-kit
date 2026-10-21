@@ -578,7 +578,7 @@ async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; i
   const sha = async (rev: string) => (await gitText(run, ['rev-parse', rev])).trim()
   const [base, head, rulesRev] = await Promise.all([sha(w.base), sha(w.head), sha(w.rulesRev)])
   const { rules, changedRules } = await readRules(run, { rev: rulesRev, base, head })
-  const input = await buildInput(run, { base, head, rules, items: w.items, scope: w.scope })
+  const input = await buildInput(run, { base, head, rules, items: w.items, scope: w.scope, model: w.model })
   const notes = [
     ...(!w.items && rules.size === 0 ? [B_SKIPPED] : []),
     ...(w.foreign && changedRules.length ? [`PR меняет правила агентов: ${changedRules.join(', ')} — ревью шло по правилам базы`] : []),

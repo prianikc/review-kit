@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildInput, fenced, fileStates, itemsSection, lineCount, manifestText, MAX_INPUT_CHARS, notAttached, readRules, rulePaths } from './input.ts'
+import { buildInput, fenced, fileStates, inputLimit, itemsSection, lineCount, manifestText, MAX_INPUT_CHARS, notAttached, readRules, rulePaths } from './input.ts'
 import { repo } from '../testing/repo.ts'
 
 test('rulePaths: CLAUDE.md/AGENTS.md вверх от изменённых файлов, папки правил, copilot', () => {
@@ -53,6 +53,22 @@ test('buildInput: разделы RULES/DIFF/FILES и ITEMS; лимит вход�
   assert.match(text, /## ITEMS\n### i1 — a.ts:1 — carol \(stale\)\nпочему 2\?/)
   const huge = new Map([['CLAUDE.md', 'x'.repeat(MAX_INPUT_CHARS)]])
   await assert.rejects(buildInput(r.run, { base, head, rules: huge }), /вход .* больше лимита .*: в дельте 1 файл\(ов\)/)
+})
+
+test('inputLimit: opus — 500 000, остальные и без модели — 250 000', () => {
+  assert.equal(inputLimit('opus'), 500_000)
+  assert.equal(inputLimit('sonnet'), MAX_INPUT_CHARS)
+  assert.equal(inputLimit('haiku'), 250_000)
+  assert.equal(inputLimit(), 250_000)
+})
+
+test('buildInput: лимит по модели — 300 000 проходит на opus, на sonnet отказ с подсказкой', async () => {
+  const r = repo()
+  const base = r.commit('a.ts', '1\n', 'base')
+  const head = r.commit('a.ts', '2\n', 'head')
+  const rules = new Map([['CLAUDE.md', 'x'.repeat(300_000)]])
+  assert.ok((await buildInput(r.run, { base, head, rules, model: 'opus' })).length > 300_000)
+  await assert.rejects(buildInput(r.run, { base, head, rules, model: 'sonnet' }), /больше лимита 250000 для модели sonnet \(у opus — 500000\)/)
 })
 
 test('buildInput: scope — только файлы, которые PR меняет от базы', async () => {
