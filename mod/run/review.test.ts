@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildDraft, buildReplies, chosenVerdict, parseCovered, statusesBlock, verdictName } from './review.ts'
+import { buildDraft, buildReplies, chosenVerdict, parseCovered, statusesBlock, undecidedAnswers, verdictName } from './review.ts'
 import type { Finding } from './findings.ts'
 import type { IntakeItem } from '../status.ts'
 
@@ -71,6 +71,14 @@ test('buildDraft: нет текста для находки — ошибка', (
 test('statusesBlock: счёт и строки', () => {
   const text = statusesBlock([{ id: 'r/1', class: 'closed' }, { id: 'r/2', class: 'open', reason: 'нет' }, { id: 'review/r', class: 'unknown' }], [{ id: 'r/1', path: 'a.ts', line: 3 }, { id: 'r/2', path: 'b.ts', line: 1 }, { id: 'review/r', path: null, line: null }])
   assert.equal(text, 'Прошлые замечания: закрыто 1, не закрыто 1, частично 0.\n- b.ts:1 — не закрыто: нет\n- общее — не проверено: ')
+})
+
+test('ответ автора: answered без решения — нерешён и требует правок; принятый — закрыт со своей строкой', () => {
+  assert.equal(verdictName([], [{ class: 'answered' }]), 'Changes requested')
+  assert.equal(verdictName([], [{ class: 'accepted' }]), 'Approved')
+  assert.deepEqual(undecidedAnswers([{ id: 'r/1', class: 'answered' }, { id: 'r/2', class: 'accepted' }]), ['r/1'])
+  const text = statusesBlock([{ id: 'r/1', class: 'accepted', reason: 'проверка выше' }, { id: 'r/2', class: 'closed' }], [{ id: 'r/1', path: 'a.ts', line: 3 }, { id: 'r/2', path: 'b.ts', line: 1 }])
+  assert.equal(text, 'Прошлые замечания: закрыто 2, не закрыто 0, частично 0.\n- a.ts:3 — закрыто — принят ответ автора: проверка выше')
 })
 
 test('buildReplies: тред/общий, цитата — первая строка до 200, маркер, пустые пропускаются, неизвестный id — ошибка', () => {

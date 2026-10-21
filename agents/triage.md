@@ -18,6 +18,11 @@ Each class decides what happens to a comment, so each rests on code you actually
    and `reason` says where and how it was fixed (it becomes the reply «Сделано: …»). `fixed` is only ever set on `valid`.
    An item marked `disagree`: the reviewer answered our earlier reply — judge the comment afresh, not our reply.
 3. Mode `recheck` — one status per item (the user's own earlier comment): `closed` (fixed as asked), `open` (not fixed),
-   `partial` (fixed in part; `reason` says what is left).
+   `partial` (fixed in part; `reason` says what is left), `answered` — the code was not changed as asked, but the PR
+   author replied on substance (an item marked `answered` carries the replies after the comment: an explanation, an
+   objection, a reason it is not needed). Judge the code first: fixed → `closed` or `partial` whatever the reply says.
+   `answered` never decides whether the reply is right — that is the user's call; `reason` sums up the author's argument
+   in one sentence, in Russian, and says what in the code it rests on. A reply that only promises a fix, thanks or asks
+   nothing of substance is not an answer → `open`.
 4. `evidence` — `<path from the repository root>:<line>` from your own Read, then ` — ` and a short reason.
 5. Answer only through the structured output, every item id exactly once.

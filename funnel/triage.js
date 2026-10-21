@@ -19,7 +19,7 @@ const TRIAGE = {
         required: ['id', 'class', 'reason'],
         properties: {
           id: { type: 'string' },
-          class: { enum: ['valid', 'invalid', 'question', 'out-of-scope', 'closed', 'open', 'partial'] },
+          class: { enum: ['valid', 'invalid', 'question', 'out-of-scope', 'closed', 'open', 'partial', 'answered'] },
           reason: { type: 'string', minLength: 1 },
           evidence: { type: 'string' },
           fixed: { type: 'boolean' },

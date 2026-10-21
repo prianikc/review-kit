@@ -11,7 +11,7 @@ import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, hotspotAnnotations, parseMessage, reconcile, type Hotspot } from './plannotator.ts'
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
 import { overviewText, triageText } from './run/overview.ts'
-import { APPROVABLE, buildDraft, buildReplies, chosenVerdict, parseCovered, statusesBlock, type ExplicitVerdict, type Texts, type VerdictName } from './run/review.ts'
+import { APPROVABLE, buildDraft, buildReplies, chosenVerdict, parseCovered, statusesBlock, undecidedAnswers, type ExplicitVerdict, type Texts, type VerdictName } from './run/review.ts'
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
@@ -706,6 +706,11 @@ async function publishReview($: EngineInterface, { pr, ids, from, verdict: asked
   if (decision === 'annotated' && selected.length === 0) return 'not published: в Plannotator остались только узкие места гайда — это подсказки, публиковать нечего. Свой комментарий — аннотация без строки [gN · узкое место гайда]'
   const statuses = recheck ? (await readJson<{ items: Array<{ id: string; class: string; reason?: string }> }>($, `${dir}/statuses.json`, { items: [] })).items : []
   const prior = (await readJson<{ prior: Array<{ id: string; path: string | null; line: number | null }> }>($, `${dir}/recheck.json`, { prior: [] })).prior
+  const undecided = undecidedAnswers(statuses)
+  if (undecided.length) {
+    const place = new Map(prior.map(p => [p.id, p.path ? `${p.path}:${p.line}` : 'общее']))
+    return `not published: автор ответил, а решение по ответу не принято: ${undecided.map(id => place.get(id) ?? id).join(', ')} — спросите пользователя и запишите accepted или open в statuses.json`
+  }
   const summary = [texts.summary?.trim() ?? '', ...(statuses.length ? [statusesBlock(statuses, prior)] : [])].filter(Boolean).join('\n\n')
   const provider = await forge($)
   const covered = parseCovered(await gitText(runner($), ['diff', '-U0', '--no-color', '--no-renames', context.base, context.head]))

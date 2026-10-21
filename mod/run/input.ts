@@ -24,6 +24,7 @@ export interface TriageItem {
   body?: string
   stale?: boolean
   disagree?: boolean
+  replies?: Array<{ author: string; body: string }>
 }
 
 export function isRulePath(path: string): boolean {
@@ -78,8 +79,10 @@ export function fenced(text: string, lang = ''): string {
 export function itemsSection(items: TriageItem[]): string {
   const blocks = items.map(item => {
     const place = item.path ? `${item.path}:${item.position ?? item.line ?? ''}` : 'общий'
-    const marks = (['stale', 'disagree'] as const).filter(name => item[name])
-    return `### ${item.id} — ${place} — ${item.author ?? ''}${marks.length ? ` (${marks.join(', ')})` : ''}\n${item.quote ?? item.body ?? ''}`
+    const replies = item.replies ?? []
+    const marks = [...(['stale', 'disagree'] as const).filter(name => item[name]), ...(replies.length ? ['answered'] : [])]
+    const answers = replies.map(reply => `\n\nОтвет ${reply.author}:\n${reply.body}`).join('')
+    return `### ${item.id} — ${place} — ${item.author ?? ''}${marks.length ? ` (${marks.join(', ')})` : ''}\n${item.quote ?? item.body ?? ''}${answers}`
   })
   return `## ITEMS\n${blocks.join('\n\n')}`
 }

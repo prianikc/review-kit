@@ -6,7 +6,7 @@ const EVIDENCE = /(?:^|[\s(`"'])([\p{L}\p{N}_./@-]+):(\d+)(?:-\d+)?/u
 const SEVERITY_RANK: Record<Severity, number> = { critical: 3, important: 2, minor: 1 }
 const MIN_QUOTE_WORDS = 6
 const MIN_QUOTE_CHARS = 30
-const CLASSES: Record<TriageMode, string[]> = { feedback: ['valid', 'invalid', 'question', 'out-of-scope'], recheck: ['closed', 'open', 'partial'] }
+const CLASSES: Record<TriageMode, string[]> = { feedback: ['valid', 'invalid', 'question', 'out-of-scope'], recheck: ['closed', 'open', 'partial', 'answered'] }
 const FALLBACK: Record<TriageMode, string> = { feedback: 'question', recheck: 'unknown' }
 const TYPOGRAPHY: Record<string, string> = { '—': '-', '–': '-', '«': '"', '»': '"', '“': '"', '”': '"', '„': '"', 'ё': 'е', 'Ё': 'Е' }
 
