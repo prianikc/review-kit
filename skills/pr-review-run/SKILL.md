@@ -62,12 +62,16 @@ Texts: `.review-kit/run/<N>/texts.json` = `{"summary": "<2–4 sentences about t
 
 1. List every finding of the three groups, one line each: `<id> · <подтверждена | ниже порога | не подтверждена> · <level>
    · <file>:<line> — <problem>`. Ask in text «Какие публикуем? Номера через запятую или «все»» and end the turn.
-   No findings at all → skip the list, `ids: []`.
+   No findings at all → skip the list, `ids: []`. The user's answer to «Как публикуем?» or to this list may already name
+   the verdict and the ids («апрувим без комментариев» → approve, `ids: []`; «запросить изменения по A-1» → request
+   changes, `ids: ["A-1"]`) — then skip the list.
 2. Write `texts.json` with a comment for each chosen id. No ids chosen → no `texts.json`: the approval goes out bare —
    no body and no comments anywhere.
-3. `review_publish` with `pr`, `ids`. The tool picks the verdict from the chosen findings (critical or important → request
-   changes, otherwise approve), shows the review and asks the user itself → section 4. An approval without chosen
-   findings is published without any text, whatever `texts.json` says.
+3. `review_publish` with `pr`, `ids`, and `verdict` (`approve` | `request-changes`) whenever the user named one — it
+   overrides the computed verdict. Without it the tool picks the verdict itself: critical or important findings, or in a
+   recheck an open or partial earlier comment → request changes, otherwise approve. It shows the review and asks the user
+   itself → section 4. An approval without chosen findings is published without any text, whatever `texts.json` says.
+   Never tell the user what verdict went out before the tool's answer names it.
 
 ### Plannotator
 
@@ -86,8 +90,14 @@ Texts: `.review-kit/run/<N>/texts.json` = `{"summary": "<2–4 sentences about t
 
 ## 4. Finish
 
-`published: <url>` → report the URL. `not published: …` → show the reason. An error with «статус публикации неизвестен» →
-tell the user to check the PR before anything else; never publish again. Then `review_finish`.
+`published: <url> (вердикт …)` → report the URL and that verdict. An error with «статус публикации неизвестен» → tell the
+user to check the PR before anything else; never publish again. Then `review_finish`.
+
+`not published: пользователь отказал (вердикт <V>)` or `not published: окно подтверждения не открылось — … (вердикт <V>)`
+→ the run stays open: say which verdict the dialog offered, then AskUserQuestion «Что делаем с ревью PR <N>?» —
+«Одобрить» (`verdict: "approve"`), «Запросить изменения» (`verdict: "request-changes"`), «Изменить выбор находок» (back to
+«Directly» step 1), «Не публиковать». A verdict option → `review_publish` again with the same `ids` and that `verdict`, then
+this section again. «Не публиковать» → `review_finish`. Any other `not published: …` → show the reason, then `review_finish`.
 
 The user does not want to publish → `review_finish`. Every stop of this skill ends with `review_finish`. Never call curl
 or the hosting API; publishing goes only through `review_publish`.

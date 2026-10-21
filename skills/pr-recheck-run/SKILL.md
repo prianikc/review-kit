@@ -25,7 +25,8 @@ and stop. Ask nothing before the report.
    «Прошлые замечания» — each `prior` item as `<path>:<line>` (or «общее») — закрыто / не закрыто / частично / не проверено —
    reason; then «Подтверждённые», «Подтверждено, ниже порога», «Не подтверждено» and «Не проверялось» as in section 2 of review-kit:pr-review-run. Verdict:
    Blocked if any critical; Changes requested if any important finding or any `open`/`partial` earlier comment; otherwise Approved.
-5. Publish: section 3 of review-kit:pr-review-run; `review_publish` adds the statuses of
-   `statuses.json` to the review body itself.
-6. `review_finish`. Every stop of this skill ends with `review_finish`. Its `worktree …` line is handled as in section 4
+5. Publish: sections 3 and 4 of review-kit:pr-review-run; `review_publish` adds the statuses of `statuses.json` to the
+   review body itself and counts open or partial earlier comments as reasons to request changes — the user's own verdict
+   («апрувим») goes in as `verdict` and overrides that. A refusal keeps the run open as section 4 says.
+6. `review_finish` once publishing is done or declined. Every stop of this skill ends with `review_finish`. Its `worktree …` line is handled as in section 4
    of review-kit:pr-review-run.
