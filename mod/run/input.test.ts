@@ -2,13 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildInput, fenced, fileStates, inputLimit, itemsSection, lineCount, manifestText, MAX_INPUT_CHARS, notAttached, readRules, rulePaths } from './input.ts'
+import { buildInput, fenced, fileStates, inputLimit, itemsSection, lineCount, manifestText, MAX_INPUT_CHARS, notAttached } from './input.ts'
 import { repo } from '../testing/repo.ts'
-
-test('rulePaths: CLAUDE.md/AGENTS.md вверх от изменённых файлов, папки правил, copilot', () => {
-  const tree = ['CLAUDE.md', 'src/AGENTS.md', 'src/x/a.ts', 'lib/CLAUDE.md', '.claude/rules/ts.md', '.cursor/rules/a.mdc', '.github/copilot-instructions.md', 'docs/CLAUDE.md.bak']
-  assert.deepEqual(rulePaths(tree, ['src/x/a.ts', 'new/dir/f.ts']), ['.claude/rules/ts.md', '.cursor/rules/a.mdc', '.github/copilot-instructions.md', 'CLAUDE.md', 'src/AGENTS.md'])
-})
 
 test('fileStates: удалён, бинарный, большой файл не приложен', async () => {
   const r = repo()
@@ -32,27 +27,18 @@ test('lineCount как splitlines, fenced длиннее бэктиков вну
   assert.equal(fenced('x ```` y'), '`````\nx ```` y\n`````')
 })
 
-test('readRules: правила берутся с базы, изменённые PR правила — в changedRules', async () => {
-  const r = repo()
-  const base = r.commit('CLAUDE.md', 'Все функции с комментарием над ними обязательно всегда.\n', 'base')
-  r.commit('CLAUDE.md', 'Можно всё.\n', 'pr ослабил правила')
-  const head = r.commit('src/a.ts', 'x\n', 'pr code')
-  const { rules, changedRules } = await readRules(r.run, { rev: base, base, head })
-  assert.deepEqual([...rules], [['CLAUDE.md', 'Все функции с комментарием над ними обязательно всегда.\n']])
-  assert.deepEqual(changedRules, ['CLAUDE.md'])
-})
-
 test('buildInput: разделы RULES/DIFF/FILES и ITEMS; лимит входа', async () => {
   const r = repo()
   const base = r.commit('a.ts', '1\n', 'base')
   const head = r.commit('a.ts', '2\n', 'head')
   const text = await buildInput(r.run, { base, head, rules: new Map([['CLAUDE.md', 'правило']]), items: [{ id: 'i1', path: 'a.ts', position: 1, author: 'carol', quote: 'почему 2?', stale: true }] })
-  assert.match(text, /^## RULES\n=== RULE FILE: CLAUDE.md ===\n```\nправило\n```/)
+  assert.match(text, /^## RULES\nRule files apply to this PR\. Read each whole from your manifest — the copy is `rules\/<path>` next to this input; cite it by <path>\.\n=== RULE FILE: CLAUDE.md ===\n\n## DIFF/)
+  assert.doesNotMatch(text, /правило/)
+  assert.match(await buildInput(r.run, { base, head, rules: new Map() }), /^## RULES\nNo rule files apply to this PR\.\n/)
   assert.match(text, /## DIFF\n```diff\n[\s\S]*\+2/)
   assert.match(text, /## FILES\n=== FILE: a.ts ===\n```\n2\n\n```/)
   assert.match(text, /## ITEMS\n### i1 — a.ts:1 — carol \(stale\)\nпочему 2\?/)
-  const huge = new Map([['CLAUDE.md', 'x'.repeat(MAX_INPUT_CHARS)]])
-  await assert.rejects(buildInput(r.run, { base, head, rules: huge }), /вход .* больше лимита .*: в дельте 1 файл\(ов\)/)
+  assert.ok((await buildInput(r.run, { base, head, rules: new Map([['CLAUDE.md', 'x'.repeat(MAX_INPUT_CHARS)]]) })).length < 1000)
 })
 
 test('inputLimit: opus — 500 000, остальные и без модели — 250 000', () => {
@@ -65,10 +51,11 @@ test('inputLimit: opus — 500 000, остальные и без модели �
 test('buildInput: лимит по модели — 300 000 проходит на opus, на sonnet отказ с подсказкой', async () => {
   const r = repo()
   const base = r.commit('a.ts', '1\n', 'base')
-  const head = r.commit('a.ts', '2\n', 'head')
-  const rules = new Map([['CLAUDE.md', 'x'.repeat(300_000)]])
+  for (const name of ['b.ts', 'c.ts', 'd.ts']) r.commit(name, `${'y'.repeat(59_000)}\n`, name)
+  const head = r.git('rev-parse', 'HEAD')
+  const rules = new Map<string, string>()
   assert.ok((await buildInput(r.run, { base, head, rules, model: 'opus' })).length > 300_000)
-  await assert.rejects(buildInput(r.run, { base, head, rules, model: 'sonnet' }), /больше лимита 250000 для модели sonnet \(у opus — 500000\)/)
+  await assert.rejects(buildInput(r.run, { base, head, rules, model: 'sonnet' }), /больше лимита 250000 для модели sonnet \(у opus — 500000\): в дельте 3 файл\(ов\)/)
 })
 
 test('buildInput: scope — только файлы, которые PR меняет от базы', async () => {

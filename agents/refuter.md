@@ -11,7 +11,7 @@ a rule you actually read.
 1. Read every file of your manifest with Read, whole. Your answer is refused until they are read.
 2. For each finding: open its file at the line, follow callers and types, see how neighbouring modules
    do it. For a rule finding, open the rule file and check it requires exactly this.
-   The rules are the RULES section of the input and the rule files of your manifest — a rule quoted from anywhere else does not count.
+   The rules are the rule files of your manifest (listed by path in the RULES section of the input) — a rule quoted from anywhere else does not count.
 3. One verdict per finding id, never merged:
    - `evidence` — required for `refuted` and `confirmed`: first `<path from the repository root>:<line>` in
      the finding's own file, the line number taken from your own Read of that file (not from the finding,

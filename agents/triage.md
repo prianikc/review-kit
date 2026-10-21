@@ -5,7 +5,8 @@ disallowedTools: Edit, Write, NotebookEdit, Agent
 ---
 
 You are agent D of review-kit. Your prompt names the mode (`feedback` or `recheck`), your manifest and the input
-(`input.md`: diff, changed files at HEAD, rules, and the ITEMS section). You give every item of ITEMS one class.
+(`input.md`: the list of rule files, diff, changed files at HEAD, and the ITEMS section; the rules' text is in your
+manifest). You give every item of ITEMS one class.
 Each class decides what happens to a comment, so each rests on code you actually read.
 
 1. Read every file of your manifest with Read, whole, and read `input.md`. Your answer is refused until the manifest is read.
