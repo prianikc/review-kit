@@ -2,7 +2,7 @@ import { binaryFiles, changedFiles, fileDiff, reviewed, showFile, treeEntries, t
 
 export const MAX_FILE_CHARS = 60_000
 export const DELETED = 'удалён'
-export const MAX_INPUT_CHARS = 250_000
+export const MAX_INPUT_CHARS = 500_000
 export const B_SKIPPED = 'агент B не запускался: для его работы нужны правила и соглашения проекта (CLAUDE.md, AGENTS.md, .claude/rules, .cursor/rules, .github/copilot-instructions.md)'
 const RULE_NAMES = ['CLAUDE.md', 'AGENTS.md']
 const RULE_DIRS = ['.claude/rules/', '.cursor/rules/']

@@ -1,12 +1,13 @@
 import type { PullRequest } from './forge/types.ts'
 import { changedFiles, fileDiff, gitText, type Run } from './git.ts'
-import { fenced, MAX_FILE_CHARS, MAX_INPUT_CHARS } from './run/input.ts'
+import { fenced, MAX_FILE_CHARS } from './run/input.ts'
 
 const PR_TARGET = /^#?(\d{1,6})$/
 const COMMIT_TARGET = /^[\w./^~@{}-]+$/
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 const MAX_COMMITS = 100
 const SHORT_SHA = 10
+const MAX_GUIDE_CHARS = 250_000
 
 export type GuideTarget = { kind: 'pr'; number: number } | { kind: 'commit'; ref: string }
 
@@ -73,11 +74,11 @@ export async function guideText(run: Run, source: GuideSource): Promise<string> 
   ].join('\n\n')
   const notes = [...source.notes]
   const diffs: string[] = []
-  const budget = { left: MAX_INPUT_CHARS - header.length }
+  const budget = { left: MAX_GUIDE_CHARS - header.length }
   for (const path of await changedFiles(run, base, head)) {
     const diff = await fileDiff(run, base, head, path)
     if (diff.length > MAX_FILE_CHARS) notes.push(`${path}: diff не приложен — больше ${MAX_FILE_CHARS} символов`)
-    else if (diff.length > budget.left) notes.push(`${path}: diff не приложен — общий лимит ${MAX_INPUT_CHARS} символов`)
+    else if (diff.length > budget.left) notes.push(`${path}: diff не приложен — общий лимит ${MAX_GUIDE_CHARS} символов`)
     else {
       diffs.push(diff)
       budget.left -= diff.length
