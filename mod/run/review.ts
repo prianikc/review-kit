@@ -5,8 +5,8 @@ import type { Finding } from './findings.ts'
 export const APPROVABLE: readonly VerdictName[] = ['Approved', 'Approved with comments']
 const DEFAULT_CHANGES_BODY = 'Нужны правки — см. комментарии.'
 const DEFAULT_EMPTY_BODY = 'Замечаний нет.'
-const UNRESOLVED = ['open', 'partial']
-const STATUS_WORDS: Record<string, string> = { open: 'не закрыто', partial: 'частично', unknown: 'не проверено' }
+const UNRESOLVED = ['open', 'partial', 'answered']
+const STATUS_WORDS: Record<string, string> = { open: 'не закрыто', partial: 'частично', unknown: 'не проверено', accepted: 'закрыто — принят ответ автора' }
 const QUOTE_LIMIT = 200
 const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/
 
@@ -31,11 +31,15 @@ export function chosenVerdict({ selected, statuses = [], decision, verdict }: { 
   return verdictName(selected, statuses)
 }
 
+export function undecidedAnswers(statuses: Array<{ id: string; class: string }>): string[] {
+  return statuses.filter(s => s.class === 'answered').map(s => s.id)
+}
+
 export function statusesBlock(statuses: Array<{ id: string; class: string; reason?: string }>, prior: Array<{ id: string; path: string | null; line: number | null }>): string {
   const place = new Map(prior.map(p => [p.id, p.path ? `${p.path}:${p.line}` : 'общее']))
   const count = (name: string) => statuses.filter(s => s.class === name).length
   const lines = statuses.filter(s => s.class in STATUS_WORDS).map(s => `- ${place.get(s.id) ?? s.id} — ${STATUS_WORDS[s.class]}: ${s.reason ?? ''}`)
-  return [`Прошлые замечания: закрыто ${count('closed')}, не закрыто ${count('open')}, частично ${count('partial')}.`, ...lines].join('\n')
+  return [`Прошлые замечания: закрыто ${count('closed') + count('accepted')}, не закрыто ${count('open')}, частично ${count('partial')}.`, ...lines].join('\n')
 }
 
 export function parseCovered(diffU0: string): Map<string, Set<number>> {

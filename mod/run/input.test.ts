@@ -103,6 +103,14 @@ test('itemsSection: общий пункт и disagree', () => {
   assert.equal(itemsSection([{ id: 'issue/1', author: 'dave', quote: 'когда?', disagree: true }]), '## ITEMS\n### issue/1 — общий — dave (disagree)\nкогда?')
 })
 
+test('itemsSection: ответы автора — метка answered и текст после цитаты', () => {
+  assert.equal(
+    itemsSection([{ id: 'r2/c5', path: 'a.ts', line: 3, author: 'alice', quote: 'тут null', replies: [{ author: 'bob', body: 'проверка выше' }] }]),
+    '## ITEMS\n### r2/c5 — a.ts:3 — alice (answered)\nтут null\n\nОтвет bob:\nпроверка выше',
+  )
+  assert.equal(itemsSection([{ id: 'r2/c6', path: 'a.ts', line: 4, author: 'alice', quote: 'имя', replies: [] }]), '## ITEMS\n### r2/c6 — a.ts:4 — alice\nимя')
+})
+
 test('manifestText: пути и заметки', () => {
   assert.equal(manifestText(['/r/CLAUDE.md'], ['нет правил']), '/r/CLAUDE.md\n# нет правил\n')
 })

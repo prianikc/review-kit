@@ -38,6 +38,12 @@ export interface PriorItem {
   author: string
   body: string
   quote: string
+  replies: PriorReply[]
+}
+
+export interface PriorReply {
+  author: string
+  body: string
 }
 
 export interface PrContext {
@@ -151,16 +157,21 @@ export function priorComments(data: PrData): { review: Review; prior: PriorItem[
   const { reviews, threads } = live(data)
   const last = latestMine(reviews, data.me)
   if (!last) return null
+  const repliesTo = (comment: Comment): PriorReply[] => {
+    const thread = threads.find(item => item.comments.some(c => c.id === comment.id))
+    const after = thread ? thread.comments.slice(thread.comments.findIndex(c => c.id === comment.id) + 1) : []
+    return after.filter(c => !mine(c, data.me)).map(c => ({ author: c.author, body: c.body }))
+  }
   const toPrior = (comment: Comment): PriorItem => {
     const reviewId = comment.reviewId ?? last.id
-    return { id: `${reviewId}/${comment.id}`, reviewId, path: comment.path ?? null, line: comment.line ?? null, author: data.me, body: comment.body, quote: comment.body }
+    return { id: `${reviewId}/${comment.id}`, reviewId, path: comment.path ?? null, line: comment.line ?? null, author: data.me, body: comment.body, quote: comment.body, replies: repliesTo(comment) }
   }
   const latest = threads.flatMap(thread => thread.comments).filter(comment => comment.reviewId === last.id && same(comment.author, data.me))
   const answered = threads
     .filter(thread => thread.comments[0].reviewId !== last.id && same(lastOf(thread).author, data.pull.author))
     .flatMap(thread => thread.comments.filter(comment => same(comment.author, data.me)).slice(0, 1))
   const prior: PriorItem[] = [...latest, ...answered].map(toPrior)
-  const body: PriorItem[] = last.body.trim() ? [{ id: `review/${last.id}`, reviewId: last.id, path: null, line: null, author: data.me, body: last.body, quote: last.body }] : []
+  const body: PriorItem[] = last.body.trim() ? [{ id: `review/${last.id}`, reviewId: last.id, path: null, line: null, author: data.me, body: last.body, quote: last.body, replies: [] }] : []
   return { review: last, prior: [...prior, ...body] }
 }
 

@@ -100,6 +100,21 @@ test('priorComments: тред прежнего ревью, где автор о�
   assert.deepEqual(priorComments(d)?.prior.map(p => p.id), ['r1/c1', 'review/r2'])
 })
 
+test('priorComments: ответы в треде после моего комментария — в replies, мои и с маркером — нет', () => {
+  const reviews = [review('r2', 'alice', 'changes', 'h2', '2026-10-02T10:00:00Z')]
+  const threads = [thread([
+    comment('c1', 'carol', 'раньше', '2026-10-02T09:00:00Z', 'r2'),
+    comment('c5', 'alice', 'тут null', '2026-10-02T10:00:00Z', 'r2'),
+    comment('c6', 'bob', 'null сюда не приходит: проверка выше', '2026-10-02T11:00:00Z', 'r2'),
+    comment('c7', 'kit', `уточнил\n\n${MARKER}`, '2026-10-02T12:00:00Z', 'r2'),
+    comment('c8', 'bob', 'см. validate()', '2026-10-02T13:00:00Z', 'r2'),
+  ])]
+  const [item] = priorComments(data({ reviews, threads }))?.prior ?? []
+  assert.equal(item.id, 'r2/c5')
+  assert.deepEqual(item.replies, [{ author: 'bob', body: 'null сюда не приходит: проверка выше' }, { author: 'bob', body: 'см. validate()' }])
+  assert.deepEqual(priorComments(data({ reviews: [review('r3', 'alice', 'comment', 'h2', '2026-10-02T10:00:00Z', 'Итог')] }))?.prior[0].replies, [])
+})
+
 test('contextOf: поля для прогона', () => {
   assert.deepEqual(contextOf(own(), 'none-own'), {
     number: 5, title: 'T', author: 'Alice', isOwn: true, headRef: 'f', headSha: 'h2', baseRef: 'main',

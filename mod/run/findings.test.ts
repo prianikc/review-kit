@@ -120,3 +120,8 @@ test('unconfirmed: опровергнутые и отброшенные — с �
   assert.equal(result.unconfirmed[0].evidence, 'src/a.ts:3 — [так] и задумано')
   assert.deepEqual(reviewPool(result).map(f => [f.id, f.mark ?? '']), [['B-2', ''], ['A-1', 'опровергнуто'], ['A-2', 'отброшено: file-not-in-diff'], ['B-1', 'отброшено: below-threshold:confirmed:minor:40']])
 })
+
+test('finishTriage: в перепроверке класс answered принимается, accepted от агента — нет', () => {
+  const answers = { items: [{ id: 'a', class: 'answered', reason: 'проверка выше' }, { id: 'b', class: 'accepted', reason: 'x' }] }
+  assert.deepEqual(finishTriage(answers, [{ id: 'a' }, { id: 'b' }], 'recheck').map(item => item.class), ['answered', 'unknown'])
+})
