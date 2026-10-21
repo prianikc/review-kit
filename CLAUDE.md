@@ -22,7 +22,7 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 | `mod/gate.ts` | gate чтения манифеста агентами |
 | `funnel/` | Workflow-скрипты: `review-funnel.js` (A/B → C), `triage.js` (D) |
 | `agents/` | `correctness` (A), `quality` (B), `refuter` (C), `triage` (D) |
-| `skills/` | `guide`, `pr-flow`, `pr-review-run`, `pr-feedback-run`, `pr-fix-run`, `pr-recheck-run`, `pr-tab`, `commit`, `confl`, `push`, `merge`, `gsync`, `main` |
+| `skills/` | `guide`, `pr-flow`, `pr-review-run`, `pr-feedback-run`, `pr-fix-run`, `pr-recheck-run`, `pr-tab`, `pr-confl` |
 | `config/funnel.json` | пороги воронки |
 
 Рабочие файлы прогона в целевом проекте — `.review-kit/run/<N>/`.
@@ -33,7 +33,8 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 - Публикация ревью и ответов, commit+push — только инструментами `review_publish`, `replies_publish`, `commit_push`;
   подтверждение они спрашивают сами. Исключение: ревью по решению Plannotator публикуется без вопроса — решение и есть
   подтверждение («Отправить аннотации» — запрос изменений, «Approve» — одобрение).
-- Внутри прогона внешние эффекты — только через инструменты мода. Исключение — ручной `/commit`: ровно `git commit`.
+- Внутри прогона внешние эффекты — только через инструменты мода. Исключение — набранная пользователем команда из
+  `manualCommitCommands` (`.claude/review-kit.local.json`): ровно `git commit`. Кит не знает других плагинов по имени.
 - Каждая остановка скилла заканчивается `review_finish` (кроме остановок Plannotator в `pr-fix-run`).
 - Ветки и stash удаляются только через `/pr cleanup`.
 - Находка агента без сценария отказа отбрасывается.
@@ -52,7 +53,7 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 ## Проверка и запуск
 
 - Тесты: `node --test 'mod/**/*.test.ts'` (без зависимостей и компилятора). Валидация: `claude plugin validate .`.
-- Локально: из тестового проекта `claude --plugin-dir /home/prian/projects/review-kit`, токен `FORGEJO_TOKEN` в окружении.
+- Локально: из тестового проекта `claude --plugin-dir <путь к клону review-kit>`, токен `FORGEJO_TOKEN` в окружении.
   Проверять явными `/pr…` командами — глобальные плагины могут перехватить «посмотри PR».
 
 ## Git

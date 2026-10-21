@@ -1,5 +1,5 @@
 import { update, type Register, type EngineInterface, type HookStream, type ProcessSpawnChunk, type ProcessSpawnResult } from 'claude-code'
-import { addSessionFile, allowsManualCommit, classifyBash, guardText, isCommitCommand, opensCommitWindow, sessionFilesBlock } from './policy.ts'
+import { allowsManualCommit, classifyBash, guardText, opensCommitWindow } from './policy.ts'
 import { manifestPaths, MAX_RETURNS, parseManifest, parseRole, unreadFiles, type GatedAgent } from './gate.ts'
 import { ADAPTERS, createProvider, selectProvider, withTimeout, type ExplicitConfig } from './forge/index.ts'
 import type { ForgeProvider } from './forge/types.ts'
@@ -18,8 +18,6 @@ const RUN = { plugin: 'review-kit', key: 'run' } as const
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
 const COMMIT_PENDING = { plugin: 'review-kit', key: 'commitPending' } as const
 const COMMIT_TURN = { plugin: 'review-kit', key: 'commitTurn' } as const
-const SESSION_FILES = { plugin: 'review-kit', key: 'sessionFiles' } as const
-const EDIT_TOOLS = { Edit: 'file_path', Write: 'file_path', NotebookEdit: 'notebook_path' } as const
 const CONFIRM_TEXT_LIMIT = 6000
 const HTTP_TIMEOUT_MS = 30_000
 const CONFIG_PATH = '.claude/review-kit.local.json'
@@ -125,7 +123,7 @@ type RunScenario = 'review' | 'recheck' | 'feedback' | 'fix' | 'conflict'
 
 const READ_ONLY_SCENARIOS: readonly RunScenario[] = ['review', 'recheck']
 
-const SKILL_OF: Record<RunScenario, string> = { review: 'pr-review-run', recheck: 'pr-recheck-run', feedback: 'pr-feedback-run', fix: 'pr-fix-run', conflict: 'confl' }
+const SKILL_OF: Record<RunScenario, string> = { review: 'pr-review-run', recheck: 'pr-recheck-run', feedback: 'pr-feedback-run', fix: 'pr-fix-run', conflict: 'pr-confl' }
 
 function handOff($: EngineInterface, pr: number, handoff: Handoff, scenario: RunScenario = 'review'): string {
   const text = `Use the review-kit:${SKILL_OF[scenario]} skill for PR ${pr}; context: .review-kit/run/${pr}/context.json`
@@ -161,6 +159,16 @@ async function explicitConfig($: EngineInterface): Promise<ExplicitConfig | unde
     return { provider: field('provider'), host: field('host'), owner: field('owner'), repo: field('repo') }
   } catch {
     throw new Error(`${CONFIG_PATH}: не JSON`)
+  }
+}
+
+async function manualCommitCommands($: EngineInterface): Promise<string[]> {
+  const text = await $.fs.read(`${await projectRoot($)}/${CONFIG_PATH}`).then(String, () => '')
+  try {
+    const list = text ? (JSON.parse(text) as { manualCommitCommands?: unknown }).manualCommitCommands : undefined
+    return Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string' && item.trim() !== '') : []
+  } catch {
+    return []
   }
 }
 
@@ -431,11 +439,11 @@ async function routePr($: EngineInterface, pr: number | undefined, handoff: Hand
 }
 
 function conflictHandoff($: EngineInterface, context: PrContext, handoff: Handoff): string {
-  const text = `Use the review-kit:confl skill for PR ${context.number}`
+  const text = `Use the review-kit:pr-confl skill for PR ${context.number}`
   const what = `PR ${context.number} (свой): конфликт с ${context.baseRef}.`
   if (handoff === 'return') return `${what} ${text}`
   submitLater($, text, SUBMIT_ATTEMPTS)
-  return `${what} Разрешаю: /confl ${context.number}.`
+  return `${what} Разрешаю: /pr-confl ${context.number}.`
 }
 
 async function startReview($: EngineInterface, pr: number, { loaded, handoff, scenario = 'review' }: { loaded: Loaded; handoff: Handoff; scenario?: 'review' | 'recheck' }): Promise<string> {
@@ -532,7 +540,7 @@ async function startConflict($: EngineInterface, pr: number): Promise<string> {
   if (!context.isOwn) return `not started: PR ${pr} не ваш — конфликты разрешает автор`
   if (context.state === 'closed') return `not started: PR ${pr} закрыт`
   const operation = await operationInProgress(run)
-  if (operation || (await unmergedPaths(run)).length) return `not started: в дереве идёт ${operation ?? 'разрешение конфликтов'} — закончите его: /confl без номера`
+  if (operation || (await unmergedPaths(run)).length) return `not started: в дереве идёт ${operation ?? 'разрешение конфликтов'} — закончите его сами`
   const opened = await startRun($, pr, { loaded, handoff: 'return', scenario: 'conflict' })
   const now = await runFacts($)
   if (now?.status !== 'active' || now.pr !== pr || now.scenario !== 'conflict') return `not started: ${opened}`
@@ -814,9 +822,9 @@ async function commitPush($: EngineInterface, { pr, message, paths }: { pr: numb
   }
   const pushed = await pushRound(run, branch)
   if (pushed.ok) return `pushed: ${(await gitText(run, ['rev-parse', '--short', 'HEAD'])).trim()} в ${branch}`
-  if (pushed.rejected && merging) return `not pushed: ветка на origin ушла вперёд — коммит слияния сохранён. Пусть пользователь выполнит \`! git pull --no-rebase\`, затем review_finish и снова /confl ${pr}.\n${pushed.output}`
+  if (pushed.rejected && merging) return `not pushed: ветка на origin ушла вперёд — коммит слияния сохранён. Пусть пользователь выполнит \`! git pull --no-rebase\`, затем review_finish и снова /pr-confl ${pr}.\n${pushed.output}`
   return pushed.rejected
-    ? `not pushed: ветка на origin ушла вперёд — нужен pull/rebase. Пусть пользователь выполнит \`! git pull --rebase\` (или в своём терминале; конфликты — /confl), затем снова commit_push.\n${pushed.output}`
+    ? `not pushed: ветка на origin ушла вперёд — нужен pull/rebase. Пусть пользователь выполнит \`! git pull --rebase\` (или в своём терминале; конфликты разрешите там же), затем снова commit_push.\n${pushed.output}`
     : `not pushed: push не прошёл (коммит раунда сохранён, повтор commit_push только запушит): ${pushed.output}`
 }
 
@@ -1378,7 +1386,7 @@ export const register: Register = (on, options) => {
 
   on('prompt.submit', async ($, e, next) => {
     const result = await next(e)
-    if (!e.isMeta && !('drop' in result)) await $.state.set(COMMIT_PENDING, opensCommitWindow(e.command?.name, e.origin?.kind))
+    if (!e.isMeta && !('drop' in result)) await $.state.set(COMMIT_PENDING, opensCommitWindow(e.command?.name, e.origin?.kind, await manualCommitCommands($)))
     return result
   }).catch(($, e, next) => next(e))
 
@@ -1408,22 +1416,6 @@ export const register: Register = (on, options) => {
       await gateLog($, { pr, role, manifest: parseManifest(e.prompt) }, started.agentId, { role, event: 'hook-error', error: String(error) }).catch(() => undefined)
     }
     return started
-  }).catch(($, e, next) => next(e))
-
-  for (const [tool, field] of Object.entries(EDIT_TOOLS)) {
-    on('tool.call', { tool }, async ($, e, next) => {
-      const ran = await next(e)
-      const path = (e as Record<string, unknown>)[field]
-      if (ran.isError || 'deny' in ran || typeof path !== 'string') return ran
-      await update($, SESSION_FILES, files => addSessionFile((files as string[] | undefined) ?? [], path)).catch(() => undefined)
-      return ran
-    }).catch(($, e, next) => next(e))
-  }
-
-  on('skill.prompt', async ($, e, next) => {
-    if (e.pluginName !== 'review-kit' || !isCommitCommand(e.skill)) return next(e)
-    const files = ((await $.state.get(SESSION_FILES)).value as string[] | undefined) ?? []
-    return next({ ...e, text: `${e.text}\n\n${sessionFilesBlock(files)}` })
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'Read' }, async ($, e, next) => {

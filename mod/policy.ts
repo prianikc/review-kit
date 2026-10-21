@@ -5,9 +5,7 @@ const COMMAND_PREFIXES = new Set(['sudo', 'command', 'exec', 'nohup', 'time', 'e
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash'])
 const GIT_OPTIONS_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path'])
 const READ_METHODS = new Set(['GET', 'HEAD'])
-const COMMIT_COMMANDS = new Set(['commit', 'review-kit:commit'])
 const COMMIT_ORIGINS = new Set(['composer', 'bridge'])
-const SESSION_FILES_TITLE = '## Session files (recorded by review-kit)'
 const GUARDED: Record<Exclude<BashKind, 'other'>, string> = {
   'raw-commit': 'git commit', 'raw-push': 'git push', 'raw-destructive': 'разрушающая git-команда (--force, --amend, rebase, pull, reset --hard, branch -D, stash drop…)', 'raw-write': 'запись по сети через curl/wget',
 }
@@ -115,24 +113,13 @@ export function guardText(kind: BashKind): string | undefined {
   return kind === 'other' ? undefined : `review-kit: внутри прогона ${GUARDED[kind]} запрещена — commit, push и публикация идут через инструменты review-kit (commit_push, review_publish, replies_publish); pull/rebase пользователь делает сам`
 }
 
-export function isCommitCommand(name: string | undefined): boolean {
-  return name !== undefined && COMMIT_COMMANDS.has(name)
-}
-
-export function opensCommitWindow(name: string | undefined, originKind: string | undefined): boolean {
-  return isCommitCommand(name) && originKind !== undefined && COMMIT_ORIGINS.has(originKind)
+export function opensCommitWindow(name: string | undefined, originKind: string | undefined, allowed: readonly string[]): boolean {
+  if (name === undefined || originKind === undefined || !COMMIT_ORIGINS.has(originKind)) return false
+  return allowed.some(entry => entry === name || (!name.includes(':') && entry.endsWith(`:${name}`)))
 }
 
 export function allowsManualCommit(command: string, commitTurn: boolean, agentId: string | undefined): boolean {
   if (!commitTurn || agentId !== undefined) return false
   const kinds = simpleCommands(command).flatMap(commandKinds)
   return kinds.includes('raw-commit') && kinds.every(kind => kind === 'raw-commit' || kind === 'other')
-}
-
-export function addSessionFile(files: readonly string[], path: string): string[] {
-  return files.includes(path) ? [...files] : [...files, path]
-}
-
-export function sessionFilesBlock(files: readonly string[]): string {
-  return `${SESSION_FILES_TITLE}\n\n${files.length > 0 ? files.map(file => `- ${file}`).join('\n') : 'None recorded.'}`
 }

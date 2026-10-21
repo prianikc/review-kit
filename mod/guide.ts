@@ -45,7 +45,7 @@ export function prSource(pull: PullRequest, { base, head, baseFallback, recheck 
 
 export async function commitSource(run: Run, ref: string): Promise<GuideSource> {
   const found = await run(['git', 'rev-parse', '-q', '--verify', `${ref}^{commit}`])
-  if (found.exitCode !== 0) throw new Error(`коммит ${ref} не найден — проверьте id или обновите репозиторий (/gsync)`)
+  if (found.exitCode !== 0) throw new Error(`коммит ${ref} не найден — проверьте id или выполните git fetch`)
   const head = found.stdout.trim()
   const parents = (await gitText(run, ['rev-list', '--parents', '-n', '1', head])).trim().split(' ').slice(1)
   const who = (await gitText(run, ['log', '-1', '--format=%an, %ad', '--date=short', head])).trim()
