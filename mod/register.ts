@@ -6,9 +6,9 @@ import type { ForgeProvider } from './forge/types.ts'
 import { ACTIONABLE, contextOf, OPEN_ALL, placeAll, prMenu, pullRows, rowLine, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type PrContext, type PrData } from './status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, readRules, type TriageItem } from './run/input.ts'
 import { collectFindings, finishTriage, reviewPool, type Finding, type FindingsResult, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
-import { applySwitch, fetchHead, reviewBase, branchCandidates, createReviewWorktree, excludeFile, withExcluded, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
+import { applySwitch, fetchHead, reviewBase, branchCandidates, createReviewWorktree, excludeFile, withExcluded, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, showFile, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
 import { createdHandle, previewHandles } from './orca.ts'
-import { annotations, decisionOf, fixResult, parseMessage, reconcile } from './plannotator.ts'
+import { annotations, decisionOf, fixResult, hotspotAnnotations, parseMessage, reconcile, type Hotspot } from './plannotator.ts'
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
 import { overviewText, triageText } from './run/overview.ts'
 import { APPROVABLE, buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, type Texts, type VerdictName } from './run/review.ts'
@@ -55,6 +55,7 @@ interface PlannotatorChild {
   mode: PlannotatorMode
   started: boolean
   exit?: number | null
+  url?: string
 }
 
 const plannotatorChildren = new Map<number, PlannotatorChild>()
@@ -696,6 +697,7 @@ async function publishReview($: EngineInterface, { pr, ids, from }: { pr: number
   const unknown = wanted.filter(id => !findings.some(item => item.id === id))
   if (unknown.length) return `not published: нет находки: ${unknown.join(', ')}`
   const selected = findings.filter(item => wanted.includes(item.id))
+  if (decision === 'annotated' && selected.length === 0) return 'not published: в Plannotator остались только узкие места гайда — это подсказки, публиковать нечего. Свой комментарий — аннотация без строки [gN · узкое место гайда]'
   const recheck = context.scenario === 'recheck'
   const statuses = recheck ? (await readJson<{ items: Array<{ id: string; class: string; reason?: string }> }>($, `${dir}/statuses.json`, { items: [] })).items : []
   const prior = (await readJson<{ prior: Array<{ id: string; path: string | null; line: number | null }> }>($, `${dir}/recheck.json`, { prior: [] })).prior
@@ -727,11 +729,14 @@ async function guideSource($: EngineInterface, target: GuideTarget): Promise<Gui
 }
 
 async function prepareGuide($: EngineInterface, text: string): Promise<string> {
-  const source = await guideSource($, parseTarget(text))
+  const target = parseTarget(text)
+  const source = await guideSource($, target)
   const path = `${await projectRoot($)}/.review-kit/guide/${source.key}.md`
   await exclude($, RUN_FILES_EXCLUDE)
   await $.fs.write(path, await guideText(runner($), source))
-  return `guide: ${path}\n${source.heading}`
+  const facts = await runFacts($)
+  const inRun = target.kind === 'pr' && facts?.status === 'active' && facts.pr === target.number && (facts.scenario === 'review' || facts.scenario === 'recheck')
+  return `guide: ${path}\n${source.heading}${inRun ? `\nhotspots: .review-kit/run/${target.number}/hotspots.json` : ''}`
 }
 
 async function dropReviewWorktree($: EngineInterface): Promise<string | undefined> {
@@ -979,6 +984,28 @@ async function reviewAnnotations($: EngineInterface, dir: string): Promise<strin
   return JSON.stringify(annotations(findings, texts))
 }
 
+async function hotspotBody($: EngineInterface, dir: string): Promise<ReturnType<typeof hotspotAnnotations>> {
+  const items = (await readJson<{ items?: Hotspot[] }>($, `${dir}/hotspots.json`, {})).items ?? []
+  if (items.length === 0) return { annotations: [], skipped: [] }
+  const { base, head } = JSON.parse(String(await $.fs.read(`${dir}/context.json`))) as { base: string; head: string }
+  const run = runner($)
+  const changed = new Set(await changedFiles(run, base, head))
+  const files = [...new Set(items.map(item => item.file))].filter(file => changed.has(file))
+  const counts = new Map(await Promise.all(files.map(async file => [file, lineCount(await showFile(run, head, file).catch(() => ''))] as const)))
+  return hotspotAnnotations(items, counts)
+}
+
+function hotspotNote({ annotations: added, skipped }: ReturnType<typeof hotspotAnnotations>): string {
+  return `узких мест гайда ${added.length}${skipped.length ? `, пропущено (не строка PR): ${skipped.join(', ')}` : ''}`
+}
+
+async function addHotspots($: EngineInterface, { pr, dir, url }: { pr: number; dir: string; url: string }): Promise<string> {
+  const spots = await hotspotBody($, dir)
+  if (spots.annotations.length === 0) return `not added: узких мест гайда для PR ${pr} нет${spots.skipped.length ? ` (пропущено: ${spots.skipped.join(', ')})` : ''}`
+  const posted = await $.http.fetch(`${url}/api/external-annotations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'review-kit', annotations: spots.annotations }) })
+  return posted.ok ? `added: в Plannotator ${hotspotNote(spots)}` : `not added: Plannotator не принял аннотации (${posted.status})`
+}
+
 async function viewFindings($: EngineInterface): Promise<string> {
   const run = await runFacts($)
   if (run?.pr === undefined || run.status !== 'active') return 'Идущего ревью нет — находки показываются только внутри прогона: /pr-review <номер>.'
@@ -989,19 +1016,23 @@ async function viewFindings($: EngineInterface): Promise<string> {
   return `Открываю находки PR ${run.pr} в Plannotator.`
 }
 
-async function startPlannotator($: EngineInterface, pr: number, mode: PlannotatorMode = 'review'): Promise<string> {
+async function startPlannotator($: EngineInterface, pr: number, mode: PlannotatorMode = 'review', hotspots = false): Promise<string> {
   const run = await runFacts($)
   if (run?.pr !== pr || run.status !== 'active') return `unavailable: нет активного прогона PR ${pr}`
   if (mode === 'review' && (run.isOwn || run.state === 'closed')) return 'unavailable: свой или закрытый PR не публикуется — только отчёт'
   if (mode === 'fix' && (!run.isOwn || run.state === 'closed')) return 'unavailable: раунд правок — только свой открытый PR'
-  if (plannotatorChildren.has(pr)) return `unavailable: Plannotator по PR ${pr} уже открыт — дождитесь итога`
+  const open = plannotatorChildren.get(pr)
+  if (open?.started && open.url && open.mode === 'review' && mode === 'review' && hotspots) return addHotspots($, { pr, dir: await runDir($, pr), url: open.url })
+  if (open) return `unavailable: Plannotator по PR ${pr} уже открыт — дождитесь итога`
 
   const root = await projectRoot($)
   const dir = `${root}/.review-kit/run/${pr}`
   const project = sessionProject(root)
   if ((await sessionUrls($, project)).length > 0) return 'unavailable: в этом дереве уже открыта сессия Plannotator — закройте её'
   const { base } = JSON.parse(String(await $.fs.read(`${dir}/context.json`))) as { base: string }
-  const body = mode === 'fix' ? '' : await reviewAnnotations($, dir)
+  const findingsBody = mode === 'fix' ? '' : await reviewAnnotations($, dir)
+  const spots = mode === 'review' && hotspots ? await hotspotBody($, dir) : undefined
+  const body = spots ? JSON.stringify({ ...JSON.parse(findingsBody), annotations: [...JSON.parse(findingsBody).annotations, ...spots.annotations] }) : findingsBody
   const argv = mode === 'fix' ? ['plannotator', 'review', '--diff-type', 'uncommitted', '--json'] : ['plannotator', 'review', '--base', base, '--diff-type', 'branch', '--json']
 
   const stream = $.process.spawn({ argv, cwd: root })
@@ -1027,8 +1058,9 @@ async function startPlannotator($: EngineInterface, pr: number, mode: Plannotato
     if (child.exit !== undefined) return `unavailable: Plannotator завершился до открытия сессии (код ${child.exit})`
 
     child.started = true
+    child.url = url
     const count = mode === 'fix' ? 0 : (JSON.parse(body) as { annotations: unknown[] }).annotations.length
-    return `started: Plannotator открыт — ${url}, аннотаций ${count}. Итог придёт отдельным сообщением; закончи ход и ничего не делай.`
+    return `started: Plannotator открыт — ${url}, аннотаций ${count}${spots ? ` (${hotspotNote(spots)})` : ''}. Итог придёт отдельным сообщением; закончи ход и ничего не делай.`
   } finally {
     if (!child.started) child.stop()
   }
@@ -1067,8 +1099,8 @@ const TOOL_SPECS = [
   },
   {
     name: 'review_plannotator',
-    description: 'Open Plannotator for the active review-kit run and wait for the human in the background. mode review (default): posts every finding with its draft text as annotations over the PR diff; mode fix: shows the uncommitted fixes of the round, no annotations. Answers "started: …" or "unavailable: …"; the decision arrives later as a separate message.',
-    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, mode: { enum: ['review', 'fix'] } }, required: ['pr'] },
+    description: 'Open Plannotator for the active review-kit run and wait for the human in the background. mode review (default): posts every finding with its draft text as annotations over the PR diff; mode fix: shows the uncommitted fixes of the round, no annotations. hotspots: true also posts the guide\'s narrow places (.review-kit/run/<N>/hotspots.json) as annotations headed «[gN · узкое место гайда]» — hints that are never published while that header line stays; with a review session already open it only adds them («added: …» / «not added: …»). Answers "started: …" or "unavailable: …"; the decision arrives later as a separate message.',
+    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, mode: { enum: ['review', 'fix'] }, hotspots: { type: 'boolean' } }, required: ['pr'] },
     isDeferred: false,
   },
   {
@@ -1310,9 +1342,9 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: 'mcp__review-kit__review_plannotator' }, async ($, e) => {
-    const { pr, mode } = e as unknown as { pr: number; mode?: PlannotatorMode }
+    const { pr, mode, hotspots } = e as unknown as { pr: number; mode?: PlannotatorMode; hotspots?: boolean }
     try {
-      return { result: await startPlannotator($, pr, mode === 'fix' ? 'fix' : 'review') }
+      return { result: await startPlannotator($, pr, mode === 'fix' ? 'fix' : 'review', hotspots === true) }
     } catch (error) {
       return { result: `unavailable: ${(error as Error).message}` }
     }

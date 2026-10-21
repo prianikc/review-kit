@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { annotations, decisionOf, fixResult, parseMessage, reconcile, similarity } from './plannotator.ts'
+import { annotations, decisionOf, fixResult, hotspotAnnotations, parseMessage, reconcile, similarity } from './plannotator.ts'
 import type { Finding } from './run/findings.ts'
 
 const A1: Finding = { id: 'A-1', file: 'src/a.ts', line: 3, severity: 'important', confidence: 90, problem: 'p', mark: 'средняя вероятность' }
@@ -66,6 +66,26 @@ test('reconcile: approved — только пришедшие аннотации
   assert.deepEqual([noted.ids, noted.texts.summary], [[], 'В целом ок'])
   const kept = reconcile('approved', parseMessage(MESSAGE), [A1, B1], TEXTS)
   assert.deepEqual(kept.ids, reconcile('annotated', parseMessage(MESSAGE), [A1, B1], TEXTS).ids)
+})
+
+test('hotspotAnnotations: заголовок [gN · узкое место гайда]; файл вне PR, строка за концом, пустой текст — пропуск', () => {
+  const counts = new Map([['src/a.ts', 10]])
+  const { annotations: list, skipped } = hotspotAnnotations([
+    { file: 'src/a.ts', line: 4, text: ' Гонка при повторном вызове ' },
+    { file: 'src/b.ts', line: 1, text: 'чужой файл' },
+    { file: 'src/a.ts', line: 11, text: 'за концом' },
+    { file: 'src/a.ts', line: 5, text: '  ' },
+  ], counts)
+  assert.deepEqual(list, [{ source: 'review-kit', filePath: 'src/a.ts', lineStart: 4, lineEnd: 4, text: '[g1 · узкое место гайда]\nГонка при повторном вызове' }])
+  assert.deepEqual(skipped, ['src/b.ts:1', 'src/a.ts:11', 'src/a.ts:5'])
+})
+
+test('reconcile: узкое место гайда с заголовком не публикуется; без заголовка — своё замечание', () => {
+  const message = ['# Code Review Feedback', '## src/a.ts', '### Line 4 (new)', '[g1 · узкое место гайда]', 'Гонка', '### Line 5 (new)', 'Гонка — поправьте'].join('\n')
+  const result = reconcile('annotated', parseMessage(message), [A1], TEXTS)
+  assert.deepEqual(result.ids, ['h1'])
+  assert.equal(result.texts.comments.h1, 'Гонка — поправьте')
+  assert.deepEqual(reconcile('annotated', parseMessage(message.split('\n').slice(0, 5).join('\n')), [A1], TEXTS).ids, [])
 })
 
 test('similarity: как difflib ratio на простых строках', () => {
