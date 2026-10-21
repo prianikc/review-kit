@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildDraft, buildReplies, parseCovered, statusesBlock, verdictName } from './review.ts'
+import { buildDraft, buildReplies, chosenVerdict, parseCovered, statusesBlock, verdictName } from './review.ts'
 import type { Finding } from './findings.ts'
 import type { IntakeItem } from '../status.ts'
 
@@ -15,6 +15,22 @@ test('verdictName: по серьёзности; open/partial прошлые — 
   assert.equal(verdictName([]), 'Approved')
   assert.equal(verdictName([], [{ class: 'partial' }]), 'Changes requested')
   assert.equal(verdictName([], [{ class: 'closed' }]), 'Approved')
+})
+
+test('chosenVerdict: явный вердикт пользователя сильнее находок и статусов; решение Plannotator; иначе по находкам и статусам', () => {
+  const partial = [{ class: 'partial' }]
+  assert.equal(chosenVerdict({ selected: [], statuses: partial }), 'Changes requested')
+  assert.equal(chosenVerdict({ selected: [], statuses: partial, verdict: 'approve' }), 'Approved')
+  assert.equal(chosenVerdict({ selected: [f('A-1', 'important')], verdict: 'approve' }), 'Approved with comments')
+  assert.equal(chosenVerdict({ selected: [f('A-1', 'minor')], verdict: 'request-changes' }), 'Changes requested')
+  assert.equal(chosenVerdict({ selected: [], decision: 'approved' }), 'Approved')
+  assert.equal(chosenVerdict({ selected: [f('A-1', 'minor')], decision: 'annotated' }), 'Changes requested')
+  assert.equal(chosenVerdict({ selected: [f('A-1', 'critical')] }), 'Blocked')
+})
+
+test('buildDraft: явное одобрение при открытых прошлых замечаниях без выбранных находок — голое одобрение', () => {
+  const { draft } = buildDraft({ selected: [], texts: { summary: 'Прошлые замечания: закрыто 0, не закрыто 0, частично 1.', comments: {} }, verdict: chosenVerdict({ selected: [], statuses: [{ class: 'partial' }], verdict: 'approve' }), approve: true, covered: COVERED, capabilities: CAPS })
+  assert.deepEqual(draft, { verdict: 'approve', body: '', comments: [] })
 })
 
 test('parseCovered: строки новых хунков по файлам', () => {

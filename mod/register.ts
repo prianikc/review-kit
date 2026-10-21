@@ -11,7 +11,7 @@ import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, hotspotAnnotations, parseMessage, reconcile, type Hotspot } from './plannotator.ts'
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
 import { overviewText, triageText } from './run/overview.ts'
-import { APPROVABLE, buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, type Texts, type VerdictName } from './run/review.ts'
+import { APPROVABLE, buildDraft, buildReplies, chosenVerdict, parseCovered, statusesBlock, type ExplicitVerdict, type Texts, type VerdictName } from './run/review.ts'
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
@@ -683,10 +683,16 @@ async function readJson<T>($: EngineInterface, path: string, fallback: T): Promi
   return $.fs.read(path).then(text => JSON.parse(String(text)) as T, () => fallback)
 }
 
-async function publishReview($: EngineInterface, { pr, ids, from }: { pr: number; ids: string[] | 'all'; from?: 'chat' | 'plannotator' }): Promise<string> {
+async function publishReview($: EngineInterface, { pr, ids, from, verdict: asked }: { pr: number; ids: string[] | 'all'; from?: 'chat' | 'plannotator'; verdict?: ExplicitVerdict }): Promise<string> {
   const { dir, context } = await writeContext($, pr)
   if (context.isOwn || context.state === 'closed') return 'not published: свой или закрытый PR не публикуется — только отчёт'
   const plannotator = from === 'plannotator'
+  if (plannotator && asked) return 'not published: вердикт при публикации из Plannotator задаёт его решение — verdict не передаётся'
+  if (asked && asked !== 'approve' && asked !== 'request-changes') return `not published: неизвестный вердикт ${String(asked)} — approve или request-changes`
+  const recheck = context.scenario === 'recheck'
+  const missing = [`${dir}/findings.json`, ...(recheck ? [`${dir}/statuses.json`] : [])]
+  const absent = (await Promise.all(missing.map(path => $.fs.read(path).then(() => null, () => path.slice(dir.length + 1))))).filter(Boolean)
+  if (absent.length) return `not published: в этом прогоне нет результатов агентов (${absent.join(', ')}) — вердикт не из чего считать. Сначала ${recheck ? 'перепроверка' : 'ревью'} агентами: review_prepare → Workflow → review_collect`
   const source = plannotator ? `${dir}/plannotator` : dir
   const stored = await readJson<FindingsResult>($, `${source}/findings.json`, { findings: [], belowBar: [], dropped: [], unconfirmed: [], notChecked: [] })
   const findings = plannotator ? stored.findings : reviewPool(stored)
@@ -698,20 +704,23 @@ async function publishReview($: EngineInterface, { pr, ids, from }: { pr: number
   if (unknown.length) return `not published: нет находки: ${unknown.join(', ')}`
   const selected = findings.filter(item => wanted.includes(item.id))
   if (decision === 'annotated' && selected.length === 0) return 'not published: в Plannotator остались только узкие места гайда — это подсказки, публиковать нечего. Свой комментарий — аннотация без строки [gN · узкое место гайда]'
-  const recheck = context.scenario === 'recheck'
   const statuses = recheck ? (await readJson<{ items: Array<{ id: string; class: string; reason?: string }> }>($, `${dir}/statuses.json`, { items: [] })).items : []
   const prior = (await readJson<{ prior: Array<{ id: string; path: string | null; line: number | null }> }>($, `${dir}/recheck.json`, { prior: [] })).prior
   const summary = [texts.summary?.trim() ?? '', ...(statuses.length ? [statusesBlock(statuses, prior)] : [])].filter(Boolean).join('\n\n')
   const provider = await forge($)
   const covered = parseCovered(await gitText(runner($), ['diff', '-U0', '--no-color', '--no-renames', context.base, context.head]))
-  const verdict: VerdictName = decision === 'annotated' ? 'Changes requested' : decision === 'approved' ? (selected.length ? 'Approved with comments' : 'Approved') : verdictName(selected, statuses)
+  const verdict: VerdictName = chosenVerdict({ selected, statuses, decision, verdict: asked })
   const { draft, notes } = buildDraft({ selected, texts: { ...texts, summary }, verdict, approve: APPROVABLE.includes(verdict), covered, capabilities: provider.capabilities })
   const bare = draft.verdict === 'approve' && !draft.body.trim() && draft.comments.length === 0
   const inline = draft.comments.map(c => `• ${c.path}:${c.line} — ${c.body}`).join('\n')
   const question = bare ? `Одобрить PR ${pr} без комментариев?` : `Публикуем ревью PR ${pr} (${verdict})?\n\n${draft.body}\n\n${inline}`.slice(0, CONFIRM_TEXT_LIMIT)
-  if (!plannotator && (await $.ui.ask(question, ['Да', 'Нет']).catch(() => 'Нет')) !== 'Да') return 'not published: пользователь отказал'
+  if (!plannotator) {
+    const answer = await $.ui.ask(question, ['Да', 'Нет']).then(choice => ({ choice: String(choice) }), (error: unknown) => ({ error: String(error) }))
+    if ('error' in answer) return `not published: окно подтверждения не открылось — ${answer.error} (вердикт ${verdict})`
+    if (answer.choice !== 'Да') return `not published: пользователь отказал (вердикт ${verdict})`
+  }
   const { url } = await provider.publishReview(pr, draft)
-  return `published: ${url}${notes.length ? `\n${notes.join('\n')}` : ''}`
+  return `published: ${url} (вердикт ${verdict})${notes.length ? `\n${notes.join('\n')}` : ''}`
 }
 
 async function guideSource($: EngineInterface, target: GuideTarget): Promise<GuideSource> {
@@ -1069,8 +1078,8 @@ async function startPlannotator($: EngineInterface, pr: number, mode: Plannotato
 const TOOL_SPECS = [
   {
     name: 'review_publish',
-    description: 'Publish the review of the active review-kit run: findings by ids (or "all") — confirmed, below the bar or unconfirmed — with texts from texts.json. From chat the verdict follows the selected findings (critical/important → request changes, otherwise approve) and the tool asks the user itself, publishing only on «Да». from: "plannotator" publishes the Plannotator result without asking: annotated → request changes, approved → approve. Answers "published: <url>" or "not published: …".',
-    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, ids: { oneOf: [{ const: 'all' }, { type: 'array', items: { type: 'string' } }] }, from: { enum: ['chat', 'plannotator'] } }, required: ['pr', 'ids'] },
+    description: 'Publish the review of the active review-kit run: findings by ids (or "all") — confirmed, below the bar or unconfirmed — with texts from texts.json. From chat the verdict follows the selected findings and, in a recheck, the statuses of earlier comments (critical/important or an open/partial earlier comment → request changes, otherwise approve); verdict: "approve" | "request-changes" — the verdict the user named — overrides that, and an approval without selected findings goes out bare. The tool asks the user itself, publishing only on «Да». from: "plannotator" publishes the Plannotator result without asking (annotated → request changes, approved → approve) and takes no verdict. Refuses when the run has no agent results. Answers "published: <url> (вердикт …)" or "not published: … (вердикт …)" — «пользователь отказал» or «окно подтверждения не открылось».',
+    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, ids: { oneOf: [{ const: 'all' }, { type: 'array', items: { type: 'string' } }] }, from: { enum: ['chat', 'plannotator'] }, verdict: { enum: ['approve', 'request-changes'] } }, required: ['pr', 'ids'] },
     isDeferred: false,
   },
   {
@@ -1282,7 +1291,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'mcp__review-kit__review_publish' }, async ($, e) => {
     try {
-      return { result: await publishReview($, e as unknown as { pr: number; ids: string[] | 'all'; from?: 'chat' | 'plannotator' }) }
+      return { result: await publishReview($, e as unknown as { pr: number; ids: string[] | 'all'; from?: 'chat' | 'plannotator'; verdict?: ExplicitVerdict }) }
     } catch (error) {
       return { result: `review-kit: ${(error as Error).message}` }
     }

@@ -11,6 +11,7 @@ const QUOTE_LIMIT = 200
 const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/
 
 export type VerdictName = 'Blocked' | 'Changes requested' | 'Approved with comments' | 'Approved'
+export type ExplicitVerdict = 'approve' | 'request-changes'
 
 export interface Texts {
   summary?: string
@@ -22,6 +23,12 @@ export function verdictName(findings: Array<{ severity: string }>, statuses: Arr
   if (levels.has('critical')) return 'Blocked'
   if (levels.has('important')) return 'Changes requested'
   return levels.size ? 'Approved with comments' : 'Approved'
+}
+
+export function chosenVerdict({ selected, statuses = [], decision, verdict }: { selected: Array<{ severity: string }>; statuses?: Array<{ class: string; severity?: string }>; decision?: string; verdict?: ExplicitVerdict }): VerdictName {
+  if (verdict === 'approve' || decision === 'approved') return selected.length ? 'Approved with comments' : 'Approved'
+  if (verdict === 'request-changes' || decision === 'annotated') return 'Changes requested'
+  return verdictName(selected, statuses)
 }
 
 export function statusesBlock(statuses: Array<{ id: string; class: string; reason?: string }>, prior: Array<{ id: string; path: string | null; line: number | null }>): string {
