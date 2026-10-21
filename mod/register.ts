@@ -10,6 +10,7 @@ import { applySwitch, fetchHead, reviewBase, branchCandidates, createReviewWorkt
 import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, parseMessage, reconcile } from './plannotator.ts'
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
+import { overviewText, triageText } from './run/overview.ts'
 import { APPROVABLE, buildDraft, buildReplies, parseCovered, statusesBlock, verdictName, type Texts, type VerdictName } from './run/review.ts'
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
@@ -496,7 +497,9 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
   await deleteRunDir($, pr)
   const dir = `${root}/.review-kit/run/${pr}`
   if (scenario === 'feedback' || scenario === 'fix') {
-    await $.fs.write(`${dir}/intake.json`, JSON.stringify({ head: context.headSha, items: intakeItems(loaded.data) }, null, 2))
+    const items = intakeItems(loaded.data)
+    await $.fs.write(`${dir}/intake.json`, JSON.stringify({ head: context.headSha, items }, null, 2))
+    await $.fs.write(`${dir}/overview.md`, overviewText(loaded.data, items))
   }
   if (scenario === 'recheck') {
     const prior = priorComments(loaded.data)
@@ -596,7 +599,7 @@ async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; i
   return { spec: { id: w.id, scriptPath: `${out}/${script}`, args }, notes }
 }
 
-async function prepare($: EngineInterface, pr: number, kind: PrepareKind, paths: string[]): Promise<{ workflows: WorkflowSpec[]; notes: string[] }> {
+async function prepare($: EngineInterface, pr: number, kind: PrepareKind, paths: string[]): Promise<{ workflows: WorkflowSpec[]; notes: string[]; overview?: string }> {
   const { dir, context } = await runContext($, pr)
   const base = { pr, dir, model: context.model }
   const parts: Array<{ spec: WorkflowSpec; notes: string[] }> = []
@@ -615,7 +618,8 @@ async function prepare($: EngineInterface, pr: number, kind: PrepareKind, paths:
     parts.push(await writeWorkflow($, { ...base, id: 'fix-check', base: 'HEAD', head, rulesRev: 'HEAD', foreign: false }))
   }
   if (parts.length === 0) throw new Error(`неизвестный вид подготовки ${kind}`)
-  return { workflows: parts.map(part => part.spec), notes: [...new Set(parts.flatMap(part => part.notes))] }
+  const overview = kind === 'feedback' ? await $.fs.read(`${dir}/overview.md`).then(String, () => '') : ''
+  return { workflows: parts.map(part => part.spec), notes: [...new Set(parts.flatMap(part => part.notes))], ...(overview ? { overview } : {}) }
 }
 
 async function workflowNotes($: EngineInterface, out: string): Promise<{ manifestNotes: string[]; gateRows: GateRow[] }> {
@@ -640,7 +644,7 @@ async function collect($: EngineInterface, pr: number, id: WorkflowId, outputFil
     const items = finishTriage(raw, source.items ?? source.prior ?? [], id === 'triage' ? 'feedback' : 'recheck')
     const result = JSON.stringify({ items }, null, 2)
     await $.fs.write(`${dir}/${id === 'triage' ? 'triage' : 'statuses'}.json`, result)
-    return result
+    return id === 'triage' ? `${triageText(pr, (source.items ?? []) as IntakeItem[], items)}\n\ntriage: .review-kit/run/${pr}/triage.json` : result
   }
   const run = runner($)
   const { base, head } = JSON.parse(String(await $.fs.read(`${out}/range.json`))) as { base: string; head: string }
@@ -1069,13 +1073,13 @@ const TOOL_SPECS = [
   },
   {
     name: 'review_prepare',
-    description: 'Prepare agent input for the active review-kit run: kind review | recheck | feedback | fix-check (fix-check needs paths = the round paths). Answers JSON { workflows: [{ id, scriptPath, args }], notes } — call Workflow with each scriptPath and args; or "review-kit: …" on error.',
+    description: 'Prepare agent input for the active review-kit run: kind review | recheck | feedback | fix-check (fix-check needs paths = the round paths). Answers JSON { workflows: [{ id, scriptPath, args }], notes, overview? } (overview — kind feedback: every comment of the PR, ready to show) — call Workflow with each scriptPath and args; or "review-kit: …" on error.',
     inputSchema: { type: 'object', properties: { pr: { type: 'number' }, kind: { enum: ['review', 'recheck', 'feedback', 'fix-check'] }, paths: { type: 'array', items: { type: 'string' } } }, required: ['pr', 'kind'] },
     isDeferred: false,
   },
   {
     name: 'review_collect',
-    description: 'Collect a finished review-kit workflow: id from review_prepare and the <output-file> of its completion notification. Answers the result JSON (findings, or triage classes) or "review-kit: …" when the review did not happen.',
+    description: 'Collect a finished review-kit workflow: id from review_prepare and the <output-file> of its completion notification. Answers the result JSON (findings, or recheck statuses); for triage — the summary ready to show and the triage.json path or "review-kit: …" when the review did not happen.',
     inputSchema: { type: 'object', properties: { pr: { type: 'number' }, id: { enum: ['funnel', 'delta', 'statuses', 'triage', 'fix-check'] }, outputFile: { type: 'string' } }, required: ['pr', 'id', 'outputFile'] },
     isDeferred: false,
   },
