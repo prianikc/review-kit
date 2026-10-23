@@ -8,7 +8,6 @@ declare module 'claude-code' {
       gatedAgent: StateFamily<ReviewKitGatedAgent>
       commitPending: boolean
       commitTurn: boolean
-      sessionFiles: string[]
     }
   }
 }

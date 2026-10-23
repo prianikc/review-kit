@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { addSessionFile, allowsManualCommit, classifyBash, guardText, isCommitCommand, opensCommitWindow, sessionFilesBlock } from './policy.ts'
+import { allowsManualCommit, classifyBash, guardText, opensCommitWindow } from './policy.ts'
 
 test('сырые git-команды и curl-запись распознаются, чтение — нет', () => {
   assert.equal(classifyBash('git commit -m x'), 'raw-commit')
@@ -23,15 +23,6 @@ test('guardText: что запрещено и чем пользоваться', 
   assert.equal(guardText('other'), undefined)
 })
 
-test('isCommitCommand: только скилл commit, с префиксом плагина или без', () => {
-  assert.equal(isCommitCommand('commit'), true)
-  assert.equal(isCommitCommand('review-kit:commit'), true)
-  assert.equal(isCommitCommand('commit-all'), false)
-  assert.equal(isCommitCommand('mycommit'), false)
-  assert.equal(isCommitCommand('foo:commit'), false)
-  assert.equal(isCommitCommand(undefined), false)
-})
-
 test('allowsManualCommit: только git commit главного цикла в окне ручного /commit', () => {
   assert.equal(allowsManualCommit('git commit -m x -- a.ts', true, undefined), true)
   assert.equal(allowsManualCommit('git add -- a.ts && git commit -m x -- a.ts', true, undefined), true)
@@ -46,21 +37,13 @@ test('allowsManualCommit: только git commit главного цикла в
   assert.equal(allowsManualCommit('git status', true, undefined), false)
 })
 
-test('opensCommitWindow: ручной /commit из терминала или Remote Control', () => {
-  assert.equal(opensCommitWindow('commit', 'composer'), true)
-  assert.equal(opensCommitWindow('review-kit:commit', 'bridge'), true)
-  assert.equal(opensCommitWindow('commit', 'sdk'), false)
-  assert.equal(opensCommitWindow('commit', undefined), false)
-  assert.equal(opensCommitWindow('pr', 'composer'), false)
-})
-
-test('addSessionFile: без дублей, порядок первой записи', () => {
-  assert.deepEqual(addSessionFile([], '/r/a.ts'), ['/r/a.ts'])
-  assert.deepEqual(addSessionFile(['/r/a.ts', '/r/b.ts'], '/r/a.ts'), ['/r/a.ts', '/r/b.ts'])
-  assert.deepEqual(addSessionFile(['/r/a.ts'], '/r/b.ts'), ['/r/a.ts', '/r/b.ts'])
-})
-
-test('sessionFilesBlock: список путей или явное «нет записей»', () => {
-  assert.equal(sessionFilesBlock(['/r/a.ts', '/r/b.ts']), '## Session files (recorded by review-kit)\n\n- /r/a.ts\n- /r/b.ts')
-  assert.equal(sessionFilesBlock([]), '## Session files (recorded by review-kit)\n\nNone recorded.')
+test('opensCommitWindow: набранная пользователем команда из manualCommitCommands, полным или коротким именем', () => {
+  const allowed = ['dev-kit:commit']
+  assert.equal(opensCommitWindow('dev-kit:commit', 'composer', allowed), true)
+  assert.equal(opensCommitWindow('commit', 'bridge', allowed), true)
+  assert.equal(opensCommitWindow('other:commit', 'composer', allowed), false)
+  assert.equal(opensCommitWindow('commit', 'sdk', allowed), false)
+  assert.equal(opensCommitWindow('commit', undefined, allowed), false)
+  assert.equal(opensCommitWindow('pr', 'composer', allowed), false)
+  assert.equal(opensCommitWindow('commit', 'composer', []), false)
 })
