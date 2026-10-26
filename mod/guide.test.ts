@@ -26,6 +26,10 @@ test('prSource: заголовок, описание, пометки влито�
   assert.deepEqual(prSource(pull({ body: undefined }), { base: 'b', head: 'h', baseFallback: false }).message, '')
 })
 
+test('prSource: пометка о базе ревью — в notes', () => {
+  assert.deepEqual(prSource(pull(), { base: 'b', head: 'h', baseFallback: false, baseNote: 'влит main' }).notes, ['влит main'])
+})
+
 test('prSource: перепроверка — дельта после моего ревью; полный режим — весь PR с пометкой', () => {
   const delta = prSource(pull(), { base: 'r', head: 'h', baseFallback: false, recheck: { mode: 'delta' } })
   assert.equal(delta.key, 'pr-7-delta')

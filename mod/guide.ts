@@ -29,7 +29,7 @@ export function parseTarget(text: string): GuideTarget {
   return { kind: 'commit', ref: target }
 }
 
-export function prSource(pull: PullRequest, { base, head, baseFallback, recheck }: { base: string; head: string; baseFallback: boolean; recheck?: { mode: string; note?: string } }): GuideSource {
+export function prSource(pull: PullRequest, { base, head, baseFallback, baseNote, recheck }: { base: string; head: string; baseFallback: boolean; baseNote?: string; recheck?: { mode: string; note?: string } }): GuideSource {
   const state = pull.merged ? 'влит' : pull.state === 'closed' ? 'закрыт' : ''
   const delta = recheck?.mode === 'delta'
   return {
@@ -39,7 +39,7 @@ export function prSource(pull: PullRequest, { base, head, baseFallback, recheck 
     message: (pull.body ?? '').trim(),
     base,
     head,
-    notes: [...(baseFallback ? ['база взята от main: базовая ветка PR удалена — в diff могут попасть чужие коммиты'] : []), ...(recheck?.note ? [recheck.note] : [])],
+    notes: [...(baseFallback ? ['база взята от main: базовая ветка PR удалена — в diff могут попасть чужие коммиты'] : []), ...(baseNote ? [baseNote] : []), ...(recheck?.note ? [recheck.note] : [])],
   }
 }
 

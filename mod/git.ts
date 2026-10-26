@@ -2,6 +2,7 @@ import type { PullRequest } from './forge/types.ts'
 
 export const FULL_NOTE = 'после rebase/force-push моего ревью нет в истории — проверено всё от базы PR'
 const SYNTHETIC_MESSAGE = 'review-kit: база перепроверки — моё ревью плюс влитая база'
+const SYNTHETIC_REVIEW_MESSAGE = 'review-kit: база ревью — базовая ветка плюс влитый main'
 const SYNTHETIC_IDENTITY = { GIT_AUTHOR_NAME: 'review-kit', GIT_AUTHOR_EMAIL: 'review-kit@localhost', GIT_COMMITTER_NAME: 'review-kit', GIT_COMMITTER_EMAIL: 'review-kit@localhost' }
 
 export type Run = (argv: readonly string[], init?: { cwd?: string; env?: Record<string, string>; stdin?: string }) => Promise<{ exitCode: number; stdout: string; stderr: string }>
@@ -108,6 +109,7 @@ export interface SwitchPlan {
   base: string
   detached: boolean
   baseFallback: boolean
+  baseNote?: string
   headRef: string
   own: boolean
 }
@@ -162,22 +164,36 @@ export async function planSwitch(run: Run, input: SwitchInput): Promise<SwitchPl
   if (busy && busy !== root) throw new Error(`ветка ${input.headRef} занята worktree ${busy}`)
   const { target, detached } = await fetchHead(run, input)
   const final = !detached && input.own ? await ownFinal(run, input.headRef, target) : target
-  const { base, baseFallback } = await reviewBase(run, { final, baseRef: input.baseRef })
-  return { target, final, base, detached, baseFallback, headRef: input.headRef, own: input.own }
+  const { base, baseFallback, baseNote } = await reviewBase(run, { final, baseRef: input.baseRef })
+  return { target, final, base, detached, baseFallback, ...(baseNote ? { baseNote } : {}), headRef: input.headRef, own: input.own }
 }
 
-export async function reviewBase(run: Run, { final, baseRef }: { final: string; baseRef: string }): Promise<{ base: string; baseFallback: boolean }> {
+export async function withMainExcluded(run: Run, { base, head, baseRef }: { base: string; head: string; baseRef: string }): Promise<{ base: string; note?: string }> {
+  if (baseRef === BASE_BRANCH) return { base }
+  if ((await run(['git', 'fetch', '-q', 'origin', '+refs/heads/main:refs/remotes/origin/main'])).exitCode !== 0) return { base }
+  const merge = await run(['git', 'merge-base', 'origin/main', head])
+  if (merge.exitCode !== 0) return { base }
+  const mainBase = merge.stdout.trim()
+  if (await isAncestor(run, mainBase, base)) return { base }
+  const tree = await run(['git', 'merge-tree', '--write-tree', base, mainBase])
+  if (tree.exitCode !== 0) return { base, note: `в PR влит main, которого нет в ${baseRef}; отделить его не удалось (конфликт) — в diff есть изменения из main` }
+  const synthetic = await gitText(run, ['commit-tree', tree.stdout.split('\n')[0], '-p', base, '-p', mainBase, '-m', SYNTHETIC_REVIEW_MESSAGE], { env: SYNTHETIC_IDENTITY })
+  return { base: synthetic.trim(), note: `в PR влит main, которого нет в ${baseRef}, — изменения из main в ревью не входят` }
+}
+
+export async function reviewBase(run: Run, { final, baseRef }: { final: string; baseRef: string }): Promise<{ base: string; baseFallback: boolean; baseNote?: string }> {
   await run(['git', 'fetch', '-q', 'origin', `+refs/heads/${baseRef}:refs/remotes/origin/${baseRef}`])
   const hasBase = await hasRef(run, `refs/remotes/origin/${baseRef}`)
   if (!hasBase && (await run(['git', 'fetch', '-q', 'origin', '+refs/heads/main:refs/remotes/origin/main'])).exitCode !== 0) {
     throw new Error(`на сервере нет ни ветки ${baseRef}, ни main`)
   }
   const baseTip = hasBase ? `origin/${baseRef}` : 'origin/main'
-  const base = (await isAncestor(run, final, baseTip)) ? await mergedBase(run, final, baseTip) : (await gitText(run, ['merge-base', baseTip, final])).trim()
-  return { base, baseFallback: !hasBase }
+  if (await isAncestor(run, final, baseTip)) return { base: await mergedBase(run, final, baseTip), baseFallback: !hasBase }
+  const { base, note } = await withMainExcluded(run, { base: (await gitText(run, ['merge-base', baseTip, final])).trim(), head: final, baseRef: hasBase ? baseRef : BASE_BRANCH })
+  return { base, baseFallback: !hasBase, ...(note ? { baseNote: note } : {}) }
 }
 
-export async function applySwitch(run: Run, plan: SwitchPlan): Promise<{ head: string; base: string; detached: boolean; baseFallback: boolean }> {
+export async function applySwitch(run: Run, plan: SwitchPlan): Promise<{ head: string; base: string; detached: boolean; baseFallback: boolean; baseNote?: string }> {
   if ((await gitText(run, ['status', '--porcelain', '-uno', '--ignore-submodules=all'])).trim()) throw new Error('в дереве изменены отслеживаемые файлы — сначала stash')
   const sw = async (...args: string[]) => {
     const result = await run(['git', 'switch', '-q', ...args])
@@ -190,7 +206,7 @@ export async function applySwitch(run: Run, plan: SwitchPlan): Promise<{ head: s
     await sw(plan.headRef)
     if ((await gitText(run, ['rev-parse', 'HEAD'])).trim() !== plan.final) await gitText(run, ['merge', '-q', '--ff-only', `origin/${plan.headRef}`])
   }
-  return { head: (await gitText(run, ['rev-parse', 'HEAD'])).trim(), base: plan.base, detached: plan.detached, baseFallback: plan.baseFallback }
+  return { head: (await gitText(run, ['rev-parse', 'HEAD'])).trim(), base: plan.base, detached: plan.detached, baseFallback: plan.baseFallback, ...(plan.baseNote ? { baseNote: plan.baseNote } : {}) }
 }
 
 export const STASH_PREFIX = 'review-kit:'
@@ -448,7 +464,7 @@ async function prBase(run: Run, baseRef: string, target: string): Promise<string
   for (const ref of [...new Set([baseRef, 'main'])]) {
     await run(['git', 'fetch', '-q', 'origin', `+refs/heads/${ref}:refs/remotes/origin/${ref}`])
     const merge = await run(['git', 'merge-base', `origin/${ref}`, target])
-    if (merge.exitCode === 0) return merge.stdout.trim()
+    if (merge.exitCode === 0) return (await withMainExcluded(run, { base: merge.stdout.trim(), head: target, baseRef: ref })).base
   }
   throw new Error(`базу PR не найти (нет ни origin/${baseRef}, ни origin/main) — настройки Claude Code не проверить, вкладку не открываю`)
 }

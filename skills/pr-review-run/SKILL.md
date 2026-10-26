@@ -6,7 +6,7 @@ description: Use when review-kit opened a review run for a PR (.review-kit/run/<
 # pr-review-run
 
 The mod already switched the tree to the PR, asked for the model and opened the run. Read `.review-kit/run/<N>/context.json`:
-`number`, `title`, `author`, `isOwn`, `state`, `status`, `baseFallback`. Ask nothing before the review.
+`number`, `title`, `author`, `isOwn`, `state`, `status`, `baseFallback`, `baseNote`. Ask nothing before the review.
 No `context.json` → tell the user to run `/pr-review <N>` and stop.
 
 ## 1. Review
@@ -38,7 +38,8 @@ order:
 4. «Подтверждено, ниже порога» — each of `belowBar` in the same form plus `<confidence>%`.
 5. «Не подтверждено» — each of `unconfirmed` in the same form plus the reason: «опровергнуто: <evidence>» or the `mark`.
 6. «Не проверялось» — every `notChecked` entry, duplicates from `dropped` as «<id> — дубль <id>», and, when `baseFallback`
-   is true, «база ревью взята от main: базовая ветка PR удалена — в diff могут попасть чужие коммиты».
+   is true, «база ревью взята от main: базовая ветка PR удалена — в diff могут попасть чужие коммиты»; when `baseNote`
+   is present, `baseNote` as is.
 A section with no entries is left out, except «Не проверялось».
 
 Levels: **critical** — breaks the product, loses data, or is exploitable; **important** — a measurable regression, a
