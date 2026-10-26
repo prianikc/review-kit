@@ -269,7 +269,7 @@ async function stashOrCancel($: EngineInterface, pr: number): Promise<SavedStash
   return { name, sha }
 }
 
-async function switchOrRestore($: EngineInterface, { plan, stash }: { plan: SwitchPlan; stash: SavedStash | null }): Promise<{ head: string; base: string; detached: boolean; baseFallback: boolean }> {
+async function switchOrRestore($: EngineInterface, { plan, stash }: { plan: SwitchPlan; stash: SavedStash | null }): Promise<{ head: string; base: string; detached: boolean; baseFallback: boolean; baseNote?: string }> {
   const run = runner($)
   const before = (await gitText(run, ['rev-parse', 'HEAD'])).trim()
   try {
@@ -528,7 +528,7 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
   }
 
   const who = context.isOwn ? 'свой — только отчёт' : context.state === 'closed' ? 'закрыт — только отчёт' : context.author
-  return `PR ${pr} (${who}): дерево на ${switched.detached ? 'коммите PR' : context.headRef}${stash ? `, stash «${stash}»` : ''}, модель ${model}${switched.baseFallback ? `, база ревью — от main: ветка ${context.baseRef} на сервере удалена` : ''}. Прогон открыт до конца ревью; закрыть вручную — /pr-review stop.${next}`
+  return `PR ${pr} (${who}): дерево на ${switched.detached ? 'коммите PR' : context.headRef}${stash ? `, stash «${stash}»` : ''}, модель ${model}${switched.baseFallback ? `, база ревью — от main: ветка ${context.baseRef} на сервере удалена` : ''}${switched.baseNote ? `, ${switched.baseNote}` : ''}. Прогон открыт до конца ревью; закрыть вручную — /pr-review stop.${next}`
 }
 
 async function startConflict($: EngineInterface, pr: number): Promise<string> {
@@ -743,10 +743,10 @@ async function guideSource($: EngineInterface, target: GuideTarget): Promise<Gui
   const provider = await forge($)
   const pull = await provider.getPull(target.number)
   const dir = await runDir($, pull.number)
-  const active = (await activeRun($)) === pull.number ? await readJson<{ base?: string; head?: string; baseFallback?: boolean; scenario?: string }>($, `${dir}/context.json`, {}) : {}
+  const active = (await activeRun($)) === pull.number ? await readJson<{ base?: string; head?: string; baseFallback?: boolean; baseNote?: string; scenario?: string }>($, `${dir}/context.json`, {}) : {}
   const recheck = active.scenario === 'recheck' ? await readJson<{ base?: string; mode?: string; note?: string }>($, `${dir}/recheck.json`, {}) : {}
-  if (active.head && recheck.base && recheck.mode) return prSource(pull, { base: recheck.base, head: active.head, baseFallback: Boolean(active.baseFallback), recheck: { mode: recheck.mode, note: recheck.note } })
-  if (active.base && active.head) return prSource(pull, { base: active.base, head: active.head, baseFallback: Boolean(active.baseFallback) })
+  if (active.head && recheck.base && recheck.mode) return prSource(pull, { base: recheck.base, head: active.head, baseFallback: Boolean(active.baseFallback), baseNote: active.baseNote, recheck: { mode: recheck.mode, note: recheck.note } })
+  if (active.base && active.head) return prSource(pull, { base: active.base, head: active.head, baseFallback: Boolean(active.baseFallback), baseNote: active.baseNote })
   const { target: head } = await fetchHead(run, { number: pull.number, headRef: pull.headRef, headSha: pull.headSha, baseRef: pull.baseRef, own: false, pullRef: provider.pullRef(pull.number) })
   return prSource(pull, { head, ...(await reviewBase(run, { final: head, baseRef: pull.baseRef })) })
 }
