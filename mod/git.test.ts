@@ -166,6 +166,44 @@ test('своя ветка разошлась с origin — ошибка; баз�
   assert.equal(plan.baseFallback, true)
 })
 
+function mainMergedIntoPr({ conflict = false, fresh = true, mainFile = 'm.txt' } = {}) {
+  const r = repo(); r.origin()
+  r.commit('a.txt', '1\n', 'start'); r.git('push', '-q', 'origin', 'main')
+  r.git('switch', '-qc', 'base'); r.commit(conflict ? 'a.txt' : 'b.txt', 'base\n', 'base work'); r.git('push', '-q', 'origin', 'base')
+  r.git('switch', '-qc', 'feat')
+  r.git('switch', '-q', 'main'); r.commit(conflict ? 'a.txt' : mainFile, 'main\n', 'main work'); r.git('push', '-q', 'origin', 'main')
+  r.git('switch', '-q', 'feat')
+  if (fresh) {
+    spawnSync('git', ['merge', '-q', '--no-edit', 'main'], { cwd: r.dir })
+    if (conflict) { writeFileSync(join(r.dir, 'a.txt'), 'both\n'); r.git('add', 'a.txt'); r.git('commit', '-qm', 'merge main') }
+  }
+  const head = r.commit('p.txt', 'pr\n', 'pr work'); r.git('push', '-q', 'origin', 'feat')
+  r.git('switch', '-q', 'main'); r.git('branch', '-qD', 'feat', 'base')
+  return { r, head, input: { ...SWITCH, baseRef: 'base', headSha: head } }
+}
+
+test('planSwitch: в PR влит main, которого нет в базовой ветке, — изменения main в ревью не входят', async () => {
+  const { r, head, input } = mainMergedIntoPr()
+  const plan = await planSwitch(r.run, input)
+  assert.deepEqual(await changedFiles(r.run, plan.base, head), ['p.txt'])
+  assert.match(plan.baseNote ?? '', /влит main, которого нет в base, — изменения из main в ревью не входят/)
+  assert.equal((await applySwitch(r.run, plan)).baseNote, plan.baseNote)
+})
+
+test('planSwitch: PR не вливал свежий main — база merge-base, без пометки', async () => {
+  const { r, head, input } = mainMergedIntoPr({ fresh: false })
+  const plan = await planSwitch(r.run, input)
+  assert.equal(plan.base, r.git('merge-base', 'origin/base', head))
+  assert.equal(plan.baseNote, undefined)
+})
+
+test('planSwitch: база и main конфликтуют — база merge-base, пометка, что main не отделить', async () => {
+  const { r, head, input } = mainMergedIntoPr({ conflict: true })
+  const plan = await planSwitch(r.run, input)
+  assert.equal(plan.base, r.git('merge-base', 'origin/base', head))
+  assert.match(plan.baseNote ?? '', /отделить его не удалось \(конфликт\) — в diff есть изменения из main/)
+})
+
 test('applySwitch: в дереве изменены отслеживаемые файлы — ошибка до переключения', async () => {
   const r = repo(); r.origin()
   r.commit('a.txt', '1', 'base'); r.git('push', '-q', 'origin', 'main')
@@ -303,6 +341,12 @@ test('worktree ревью: PR меняет настройки Claude Code — wo
   const first = await createReviewWorktree(r.run, { ...input, isActive: async () => false })
   assert.deepEqual([first.created, first.executable], [false, ['.claude/settings.json']])
   assert.equal(existsSync(first.path), false)
+})
+
+test('worktree ревью: настройки Claude Code пришли из влитого main — worktree создаётся', async () => {
+  const { r, head } = mainMergedIntoPr({ mainFile: '.claude/settings.json' })
+  const tree = await createReviewWorktree(r.run, { root: r.dir, number: 7, headRef: 'feat', headSha: head, baseRef: 'base', pullRef: 'refs/pull/7/head', isActive: async () => false })
+  assert.deepEqual([tree.created, tree.executable], [true, []])
 })
 
 test('worktree ревью: PR меняет только инструкции и данные .claude/ — worktree создаётся, инструкции в ответе', async () => {
