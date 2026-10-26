@@ -84,7 +84,7 @@ function lastOf(thread: Thread): Comment {
   return thread.comments[thread.comments.length - 1]
 }
 
-function live(data: PrData): { reviews: Review[]; threads: Thread[] } {
+export function live(data: PrData): { reviews: Review[]; threads: Thread[] } {
   const drafts = new Set(data.reviews.filter(review => review.state === 'pending').map(review => review.id))
   return {
     reviews: data.reviews.filter(review => !drafts.has(review.id)),

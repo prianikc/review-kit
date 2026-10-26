@@ -14,7 +14,7 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 | `mod/register.ts` | команды `/pr…`, инструменты `review_*`, `conflict_start`, `replies_publish`, `commit_push`, `guide_prepare`, хуки, состояние прогона |
 | `mod/forge/` | модель хостинга (`types.ts`), выбор адаптера и токена (`index.ts`), адаптеры (`forgejo.ts`), фейк для тестов |
 | `mod/status.ts` | сценарий и статус PR, intake замечаний |
-| `mod/run/` | правила Claude Code для PR (`rules.ts`), вход агентам (`input.ts`), сбор находок и триажа (`findings.ts`), тело ревью и ответы (`review.ts`), обзор и итог замечаний к своему PR (`overview.ts`) |
+| `mod/run/` | правила Claude Code для PR (`rules.ts`), вход агентам (`input.ts`), обсуждение PR (`discussion.ts`), сбор находок и триажа (`findings.ts`), тело ревью и ответы (`review.ts`), обзор и итог замечаний к своему PR (`overview.ts`) |
 | `mod/guide.ts` | вход скилла `guide`: цель (PR или коммит), заголовок, сообщение, коммиты, stat, diff |
 | `mod/git.ts` | переключение на PR, раунд, слияние базы, commit+push, уборка, worktree |
 | `mod/orca.ts`, `mod/plannotator.ts` | интеграции с Orca и Plannotator |

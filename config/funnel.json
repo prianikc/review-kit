@@ -1,4 +1,5 @@
 {
+  "bots": ["ai-review-bot"],
   "threshold": [
     { "verdict": "confirmed", "severity": ["critical", "important"], "min": 75, "result": "in" },
     { "verdict": "confirmed", "severity": ["minor"], "min": 85, "result": "in" },

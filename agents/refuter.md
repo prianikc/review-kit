@@ -12,6 +12,9 @@ a rule you actually read.
 2. For each finding: open its file at the line, follow callers and types, see how neighbouring modules
    do it. For a rule finding, open the rule file and check it requires exactly this.
    The rules are the rule files of your manifest (listed by path in the RULES section of the input) — a rule quoted from anywhere else does not count.
+   Before judging, read `## DISCUSSION`. A finding that duplicates an existing thread is closed when the author's latest
+   reply settles it — in the thread or in a general comment. If the author points to another PR or commit as the fix,
+   verify it there when it is reachable.
 3. One verdict per finding id, never merged:
    - `evidence` — required for `refuted` and `confirmed`: first `<path from the repository root>:<line>` in
      the finding's own file, the line number taken from your own Read of that file (not from the finding,
@@ -21,6 +24,10 @@ a rule you actually read.
    - `confirmed` — the defect is at that line; give your own `severity` (critical | important | minor) and
      `confidence` (0–100). A finding with `rule` rated `important` stays at least `important`: a project-rule
      violation a reviewer would send back is never `minor`;
-   - `cannot-refute` — you could not check it.
+   - `cannot-refute` — you could not check it;
+   - `closed` — closed by a reply in thread Tn: the finding repeats a thread of `## DISCUSSION` that the discussion
+     already settles (the author's answer holds, the fix is in another PR or commit you checked, or the thread is
+     resolved). Give `thread` — the id — and in `evidence` the reply that closes it, quoted. A finding with
+     `followUp` argues the reply does not close it: judge that argument, not the repeat.
    - `duplicateOf` — the id of a finding in the same group that states the same defect.
 4. Answer only through the structured output.

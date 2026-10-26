@@ -125,3 +125,44 @@ test('finishTriage: в перепроверке класс answered приним
   const answers = { items: [{ id: 'a', class: 'answered', reason: 'проверка выше' }, { id: 'b', class: 'accepted', reason: 'x' }] }
   assert.deepEqual(finishTriage(answers, [{ id: 'a' }, { id: 'b' }], 'recheck').map(item => item.class), ['answered', 'unknown'])
 })
+
+const THREADS = [
+  { id: 'T1', place: 'src/a.ts:3', status: 'open' as const, last: 'мы' as const, commentIds: ['c1'] },
+  { id: 'T2', place: 'src/a.ts:8', status: 'open' as const, last: 'автор' as const, lastAuthorReply: 'вынесено в #205', commentIds: ['c2', 'c3'] },
+]
+const confirmed = (id: string) => ({ id, verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'important', confidence: 90 })
+
+test('thread: у каждой находки Tn или null; неизвестный тред — null', () => {
+  const result = collectFindings({ ...base, threads: THREADS, raw: raw([finding(), finding({ id: 'A-2', thread: 'T9' }), finding({ id: 'A-3', thread: 'T1' })], ['A-1', 'A-2', 'A-3'].map(confirmed)) })
+  assert.deepEqual(result.findings.map(f => [f.id, f.thread]), [['A-1', null], ['A-2', null], ['A-3', 'T1']])
+})
+
+test('повтор треда с ответом автора (в треде или общим комментарием) → unconfirmed; follow-up остаётся', () => {
+  const inThread = finding({ id: 'A-1', thread: 'T2' })
+  const general = finding({ id: 'A-2', thread: 'T1', authorReply: 'валидация вынесена в #205 (issue 8917)' })
+  const followUp = finding({ id: 'A-3', thread: 'T2', followUp: '#205 не трогает .env.example' })
+  const result = collectFindings({ ...base, threads: THREADS, raw: raw([inThread, general, followUp], ['A-1', 'A-2', 'A-3'].map(confirmed)) })
+  assert.deepEqual(result.findings.map(f => [f.id, f.thread, f.followUp]), [['A-3', 'T2', '#205 не трогает .env.example']])
+  assert.deepEqual(result.unconfirmed.map(f => [f.id, f.mark]), [['A-1', 'повтор T2, автор ответил: вынесено в #205'], ['A-2', 'повтор T1, автор ответил: валидация вынесена в #205 (issue 8917)']])
+  assert.deepEqual(result.dropped.map(d => d.reason), ['repeat:T2', 'repeat:T1'])
+})
+
+test('повтор открытого треда без ответа автора — находка остаётся с thread', () => {
+  const result = collectFindings({ ...base, threads: THREADS, raw: raw([finding({ thread: 'T1' })], [confirmed('A-1')]) })
+  assert.deepEqual(result.findings.map(f => [f.id, f.thread]), [['A-1', 'T1']])
+})
+
+test('fix-check (repeats: false): ответ в треде находку не снимает', () => {
+  const result = collectFindings({ ...base, threads: THREADS, repeats: false, raw: raw([finding({ thread: 'T2' })], [confirmed('A-1')]) })
+  assert.deepEqual(result.findings.map(f => f.id), ['A-1'])
+})
+
+test('C: closed с тредом → «закрыто в обсуждении»; без известного треда — cannot-refute', () => {
+  const result = collectFindings({ ...base, threads: THREADS, raw: raw([finding(), finding({ id: 'A-2', severity: 'critical' })], [
+    { id: 'A-1', verdict: 'closed', thread: 'T2', evidence: 'автор вынес в #205' },
+    { id: 'A-2', verdict: 'closed', thread: 'T7', evidence: '?' },
+  ]) })
+  assert.deepEqual(result.unconfirmed.map(f => [f.id, f.mark, f.thread, f.evidence]), [['A-1', 'закрыто в обсуждении', 'T2', 'T2 — автор вынес в #205']])
+  assert.deepEqual(result.dropped.map(d => d.reason), ['closed-in-discussion:T2'])
+  assert.deepEqual(result.findings.map(f => [f.id, f.mark]), [['A-2', 'не проверено']])
+})

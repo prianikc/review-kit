@@ -41,6 +41,14 @@ test('buildInput: разделы RULES/DIFF/FILES и ITEMS; лимит вход�
   assert.ok((await buildInput(r.run, { base, head, rules: new Map([['CLAUDE.md', 'x'.repeat(MAX_INPUT_CHARS)]]) })).length < 1000)
 })
 
+test('buildInput: DISCUSSION — между RULES и DIFF', async () => {
+  const r = repo()
+  const base = r.commit('a.ts', '1\n', 'base')
+  const head = r.commit('a.ts', '2\n', 'head')
+  const text = await buildInput(r.run, { base, head, rules: new Map(), discussion: '## DISCUSSION\nобсуждения нет' })
+  assert.match(text, /No rule files apply to this PR\.\n\n## DISCUSSION\nобсуждения нет\n\n## DIFF/)
+})
+
 test('inputLimit: opus — 500 000, остальные и без модели — 250 000', () => {
   assert.equal(inputLimit('opus'), 500_000)
   assert.equal(inputLimit('sonnet'), MAX_INPUT_CHARS)

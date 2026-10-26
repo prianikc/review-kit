@@ -13,6 +13,9 @@ your manifest, and the PR number.
 2. Read the review input. Its sections:
    - RULES — the list of rule files, each as `=== RULE FILE: <path> ===`; the text is in your manifest's copy
      `…/rules/<path>`, and a rule is cited by that `<path>`;
+   - DISCUSSION — the PR's comments so far: inline threads `### T<n> · <path>:<line> · open|resolved · последнее
+     слово: …`, general comments and review bodies by time, unanswered questions; `[мы]` marks our comments,
+     `[автор]` the PR author's, `[бот]` a bot's;
    - DIFF — the unified diff of the change;
    - FILES — the full text at the PR head of every changed file, each under `=== FILE: <path> ===`;
      a file marked `(не приложен: …)` was not attached.
@@ -26,7 +29,17 @@ your manifest, and the PR number.
 6. Severity: `important` — a rule violation a reviewer would send back; `minor` — a rule about style or
    naming; `critical` only when the violation also breaks the product, loses data, or is exploitable.
    `confidence` is your probability, 0–100, that the finding is real and correct.
-7. Do not report: what a linter or formatter enforces, generated files, anything outside the diff. One root
+7. Before reporting, read `## DISCUSSION`. Do not report a finding that duplicates an existing
+   thread unless the author's latest reply leaves it unresolved; in that case report it as a
+   follow-up and quote the reply, saying why it does not close the issue. If the author points
+   to another PR or commit as the fix, verify it there when it is reachable.
+   A finding on the defect of a thread carries `thread` — its id (`T1`, `T2`…). The author's answer to it, in the
+   thread or in a general comment, goes verbatim into `authorReply`; a follow-up carries `followUp` — in Russian, why
+   that answer does not close the issue. A finding with `thread` and `authorReply` but no `followUp` is dropped as a
+   repeat. The intro of DISCUSSION says when this is the user's own PR: the threads are then reviewers' comments on our
+   code — a change that does not match the comment or our reply in its thread («ответили одно, сделали другое») is a
+   finding with that `thread`.
+   Do not report: what a linter or formatter enforces, generated files, anything outside the diff. One root
    cause is one finding; name its other places in `problem`.
 8. Write `problem` and `suggestion` in Russian. Put into `notChecked` every file marked `(не приложен: …)`.
    RULES empty or nothing to report → an empty `findings` list.
