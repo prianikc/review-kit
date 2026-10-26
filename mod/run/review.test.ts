@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildDraft, buildReplies, chosenVerdict, parseCovered, statusesBlock, undecidedAnswers, verdictName } from './review.ts'
+import { buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, statusesBlock, undecidedAnswers, verdictName } from './review.ts'
 import type { Finding } from './findings.ts'
 import type { IntakeItem } from '../status.ts'
 
@@ -91,4 +91,24 @@ test('buildReplies: тред/общий, цитата — первая стро�
   assert.equal(replies[1].quote, 'я'.repeat(200))
   assert.equal(buildReplies(items, { 'r1/c1': '   ' }).length, 0)
   assert.throws(() => buildReplies(items, { nope: 'x' }), /нет пункта для ответа: nope/)
+})
+
+test('chosenVerdict: открытый тред не даёт одобрить сам; явный вердикт и Plannotator сильнее', () => {
+  assert.equal(chosenVerdict({ selected: [], openThreads: 1 }), 'Changes requested')
+  assert.equal(chosenVerdict({ selected: [f('A-1', 'minor')], openThreads: 2 }), 'Changes requested')
+  assert.equal(chosenVerdict({ selected: [f('A-1', 'critical')], openThreads: 1 }), 'Blocked')
+  assert.equal(chosenVerdict({ selected: [], openThreads: 1, verdict: 'approve' }), 'Approved')
+  assert.equal(chosenVerdict({ selected: [], openThreads: 1, decision: 'approved' }), 'Approved')
+  assert.equal(chosenVerdict({ selected: [], openThreads: 0 }), 'Approved')
+})
+
+test('openThreads: открытые треды без тех, что перепроверка закрыла', () => {
+  const threads = [
+    { id: 'T1', place: 'a.ts:1', status: 'open' as const, last: 'автор' as const, commentIds: ['c1', 'c2'] },
+    { id: 'T2', place: 'a.ts:5', status: 'open' as const, last: 'мы' as const, commentIds: ['c3'] },
+    { id: 'T3', place: 'a.ts:9', status: 'resolved' as const, last: 'мы' as const, commentIds: ['c4'] },
+  ]
+  assert.deepEqual(openThreads(threads), ['T1', 'T2'])
+  assert.deepEqual(openThreads(threads, [{ id: 'r1/c1', class: 'closed' }, { id: 'r1/c3', class: 'open' }]), ['T2'])
+  assert.deepEqual(openThreads(threads, [{ id: 'r1/c3', class: 'accepted' }]), ['T1'])
 })

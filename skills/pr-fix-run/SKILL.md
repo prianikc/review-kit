@@ -19,8 +19,9 @@ review-kit:pr-feedback-run first.
 3. The round's paths = paths in `git status --porcelain --ignore-submodules=all` that are not in `status-before.txt`.
    The kit runs no checks: the project's pre-commit hook runs them at commit time.
 4. AskUserQuestion «Прогнать агентов по diff правок?» — yes → `review_prepare` with `pr`, `kind: "fix-check"`,
-   `paths` = the round's paths; `Workflow` with its `scriptPath`/`args`; `review_collect` with `id: "fix-check"`. Report the
-   findings; fix what the user picks, then recompute the round's paths (step 3) and ask this question again. A failure here →
+   `paths` = the round's paths; `Workflow` with its `scriptPath`/`args`; `review_collect` with `id: "fix-check"`. The agents
+   see the PR's threads too and check each fix against the reviewer's comment and our reply in that thread; a finding with
+   `thread` names it — «<thread>: ответили одно, сделали другое». Report the findings; fix what the user picks, then recompute the round's paths (step 3) and ask this question again. A failure here →
    «Ревью агентами не состоялось — не проверено» with the line, go on to step 5 — never `review_finish` from this step.
 5. `review_plannotator` with `pr`, `mode: "fix"`. `started` → tell the user the URL and end the turn. `unavailable` → stop
    with the reason (Plannotator is required before a push), without `review_finish`: the edits stay in the tree and the run

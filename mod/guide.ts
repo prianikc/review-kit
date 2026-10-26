@@ -19,6 +19,7 @@ export interface GuideSource {
   base: string
   head: string
   notes: string[]
+  discussion?: string
 }
 
 export function parseTarget(text: string): GuideTarget {
@@ -29,7 +30,7 @@ export function parseTarget(text: string): GuideTarget {
   return { kind: 'commit', ref: target }
 }
 
-export function prSource(pull: PullRequest, { base, head, baseFallback, baseNote, recheck }: { base: string; head: string; baseFallback: boolean; baseNote?: string; recheck?: { mode: string; note?: string } }): GuideSource {
+export function prSource(pull: PullRequest, { base, head, baseFallback, baseNote, recheck, discussion }: { base: string; head: string; baseFallback: boolean; baseNote?: string; recheck?: { mode: string; note?: string }; discussion?: string }): GuideSource {
   const state = pull.merged ? 'влит' : pull.state === 'closed' ? 'закрыт' : ''
   const delta = recheck?.mode === 'delta'
   return {
@@ -40,6 +41,7 @@ export function prSource(pull: PullRequest, { base, head, baseFallback, baseNote
     base,
     head,
     notes: [...(baseFallback ? ['база взята от main: базовая ветка PR удалена — в diff могут попасть чужие коммиты'] : []), ...(baseNote ? [baseNote] : []), ...(recheck?.note ? [recheck.note] : [])],
+    ...(discussion ? { discussion } : {}),
   }
 }
 
@@ -74,7 +76,7 @@ export async function guideText(run: Run, source: GuideSource): Promise<string> 
   ].join('\n\n')
   const notes = [...source.notes]
   const diffs: string[] = []
-  const budget = { left: MAX_GUIDE_CHARS - header.length }
+  const budget = { left: MAX_GUIDE_CHARS - header.length - (source.discussion?.length ?? 0) }
   for (const path of await changedFiles(run, base, head)) {
     const diff = await fileDiff(run, base, head, path)
     if (diff.length > MAX_FILE_CHARS) notes.push(`${path}: diff не приложен — больше ${MAX_FILE_CHARS} символов`)
@@ -84,6 +86,6 @@ export async function guideText(run: Run, source: GuideSource): Promise<string> 
       budget.left -= diff.length
     }
   }
-  const sections = [header, ...(notes.length ? [`## NOTES\n${notes.map(note => `- ${note}`).join('\n')}`] : []), `## DIFF\n${fenced(diffs.join(''), 'diff')}`]
+  const sections = [header, ...(notes.length ? [`## NOTES\n${notes.map(note => `- ${note}`).join('\n')}`] : []), ...(source.discussion ? [source.discussion] : []), `## DIFF\n${fenced(diffs.join(''), 'diff')}`]
   return `${sections.join('\n\n')}\n`
 }

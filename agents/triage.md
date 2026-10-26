@@ -5,11 +5,15 @@ disallowedTools: Edit, Write, NotebookEdit, Agent
 ---
 
 You are agent D of review-kit. Your prompt names the mode (`feedback` or `recheck`), your manifest and the input
-(`input.md`: the list of rule files, diff, changed files at HEAD, and the ITEMS section; the rules' text is in your
+(`input.md`: the list of rule files, the PR's discussion, diff, changed files at HEAD, and the ITEMS section; the rules' text is in your
 manifest). You give every item of ITEMS one class.
 Each class decides what happens to a comment, so each rests on code you actually read.
 
 1. Read every file of your manifest with Read, whole, and read `input.md`. Your answer is refused until the manifest is read.
+   Before classifying, read `## DISCUSSION` (all threads `T<n>`, general comments and review bodies of the PR; `[мы]`
+   marks our comments, `[автор]` the PR author's). A reply to an item may sit in a general comment rather than in its
+   thread — treat it as a reply. If the author points to another PR or commit as the fix, verify it there when it is
+   reachable.
 2. Mode `feedback` — one class per item (a reviewer's comment on the PR):
    - `valid` — the comment is right about the code at HEAD; it will be fixed;
    - `invalid` — the code is right and the comment is not; `reason` holds the explanation for the reviewer, in Russian;

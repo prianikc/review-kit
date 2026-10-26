@@ -74,3 +74,11 @@ test('guideText: список коммитов PR; большой diff не пр
   assert.match(text, /- big\.txt: diff не приложен — больше 60000 символов/)
   assert.doesNotMatch(text, /xxxxxxxxxx/)
 })
+
+test('guideText: DISCUSSION из prSource — перед DIFF', async () => {
+  const r = repo()
+  const base = r.commit('a.txt', '1\n', 'base')
+  const head = r.commit('a.txt', '2\n', 'pr')
+  const text = await guideText(r.run, prSource(pull(), { base, head, baseFallback: false, discussion: '## DISCUSSION\nобсуждения нет' }))
+  assert.match(text, /## STAT[\s\S]*\n\n## DISCUSSION\nобсуждения нет\n\n## DIFF/)
+})

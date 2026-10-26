@@ -1,6 +1,8 @@
 import { DELETED } from './input.ts'
+import type { DiscussionThread } from './discussion.ts'
 
-const VERDICTS = ['refuted', 'confirmed', 'cannot-refute']
+const VERDICTS = ['refuted', 'confirmed', 'cannot-refute', 'closed']
+const REPLY_LIMIT = 200
 const GATE_FAILURES = ['exhausted', 'stopped', 'hook-error', 'no-manifest']
 const EVIDENCE = /(?:^|[\s(`"'])([\p{L}\p{N}_./@-]+):(\d+)(?:-\d+)?/u
 const SEVERITY_RANK: Record<Severity, number> = { critical: 3, important: 2, minor: 1 }
@@ -30,6 +32,9 @@ export interface Finding {
   duplicateOf?: string
   mark?: string
   ruleDropped?: string
+  thread?: string | null
+  authorReply?: string
+  followUp?: string
 }
 
 export interface ThresholdRow {
@@ -86,6 +91,7 @@ function verdictOf(item: Finding, verdict: Record<string, unknown> | undefined):
   const name = verdict?.verdict
   if (!verdict || typeof name !== 'string' || !VERDICTS.includes(name)) return { ...item, verdict: 'cannot-refute' }
   const evidence = typeof verdict.evidence === 'string' ? verdict.evidence : ''
+  if (name === 'closed') return { ...item, verdict: 'closed', evidence, closedIn: typeof verdict.thread === 'string' ? verdict.thread : '' } as Finding
   if (name === 'refuted') return evidenceLine(evidence, item.file) !== null ? { ...item, verdict: 'refuted', evidence } : { ...item, verdict: 'cannot-refute' }
   if (name === 'confirmed') {
     const severity = (verdict.severity as Severity) ?? item.severity
@@ -166,9 +172,14 @@ function foldDuplicates(kept: Finding[], below: Finding[]): [Finding[], Finding[
   return [values.filter(([, b]) => b === 1).map(([item]) => withoutDuplicate(item)), values.filter(([, b]) => b === 0).map(([item]) => withoutDuplicate(item)), dropped]
 }
 
-function unconfirmedOf(item: Finding, reason: string): Finding {
+function unconfirmedOf(item: Finding, reason: string, mark?: string): Finding {
   const { duplicateOf: _duplicate, mark: _mark, ...rest } = item
-  return { ...rest, mark: reason.startsWith('refuted:') ? 'опровергнуто' : `отброшено: ${reason}` }
+  return { ...rest, mark: mark ?? (reason.startsWith('refuted:') ? 'опровергнуто' : `отброшено: ${reason}`) }
+}
+
+function clipReply(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > REPLY_LIMIT ? `${flat.slice(0, REPLY_LIMIT - 1)}…` : flat
 }
 
 export function reviewPool(result: Pick<FindingsResult, 'findings' | 'belowBar'> & { unconfirmed?: Finding[] }): Finding[] {
@@ -206,24 +217,40 @@ function gateNotes(rows: GateRow[]): string[] {
   return rows.filter(row => GATE_FAILURES.includes(row.event ?? '')).map(row => `агент ${row.role}: гейт чтения — ${row.event}${row.unread?.length ? `: не прочитаны ${row.unread.join(', ')}` : ''}${row.error ? ` (${row.error})` : ''}`)
 }
 
-export function collectFindings(input: { raw: unknown; changed: string[]; lineCounts: Map<string, number>; rules: Map<string, string>; skipped: Map<string, string>; table: ThresholdRow[]; manifestNotes: string[]; gateRows: GateRow[]; minSeverity?: Severity }): FindingsResult {
+export function collectFindings(input: { raw: unknown; changed: string[]; lineCounts: Map<string, number>; rules: Map<string, string>; skipped: Map<string, string>; table: ThresholdRow[]; manifestNotes: string[]; gateRows: GateRow[]; minSeverity?: Severity; threads?: DiscussionThread[]; repeats?: boolean }): FindingsResult {
   const raw = readRaw(input.raw)
+  const threads = new Map((input.threads ?? []).map(thread => [thread.id, thread]))
   const verdicts = new Map(raw.verdicts.filter(v => v && typeof v === 'object').map(v => [v.id as string, v]))
   const resolved = raw.findings.map(item => {
     const verdict = verdicts.get(item.id)
     const duplicate = typeof verdict?.duplicateOf === 'string' ? { duplicateOf: verdict.duplicateOf } : {}
-    return { ...verdictOf(item, verdict), lines: [item.line], ...duplicate }
+    const thread = typeof item.thread === 'string' && threads.has(item.thread) ? item.thread : null
+    return { ...verdictOf({ ...item, thread }, verdict), lines: [item.line], ...duplicate }
   })
   const valid: Finding[] = []
   const invalid: Array<{ id: string; reason: string }> = []
   const lost: Finding[] = []
-  const lose = (item: Finding, reason: string) => {
+  const lose = (item: Finding, reason: string, mark?: string) => {
     invalid.push({ id: item.id, reason })
-    lost.push(unconfirmedOf(item, reason))
+    lost.push(unconfirmedOf(item, reason, mark))
   }
-  for (const item of resolved) {
+  for (const found of resolved) {
+    const { closedIn, ...item } = found as Finding & { closedIn?: string }
     if (item.verdict === 'refuted') {
       lose(item, `refuted:${item.evidence}`)
+      continue
+    }
+    if (item.verdict === 'closed') {
+      if (closedIn && threads.has(closedIn)) {
+        lose({ ...item, thread: closedIn, evidence: `${closedIn} — ${item.evidence ?? ''}`.trim() }, `closed-in-discussion:${closedIn}`, 'закрыто в обсуждении')
+        continue
+      }
+      item.verdict = 'cannot-refute'
+      delete item.evidence
+    }
+    const reply = item.thread ? item.authorReply?.trim() || threads.get(item.thread)?.lastAuthorReply : undefined
+    if ((input.repeats ?? true) && item.thread && reply && !item.followUp?.trim()) {
+      lose(item, `repeat:${item.thread}`, `повтор ${item.thread}, автор ответил: ${clipReply(reply)}`)
       continue
     }
     const line = item.verdict === 'confirmed' ? evidenceLine(item.evidence, item.file) : null

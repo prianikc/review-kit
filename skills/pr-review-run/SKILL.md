@@ -28,18 +28,23 @@ No `context.json` → tell the user to run `/pr-review <N>` and stop.
 The guide was shown in section 1; do not repeat it.
 
 `findings.json` holds `findings` (confirmed), `belowBar` (confirmed, below the bar), `unconfirmed` (refuted or dropped by
-a check; `mark` says why, `evidence` has C's argument), `dropped` (ids with reasons) and `notChecked`. In Russian, in this
-order:
-1. `Вердикт: <verdict>` with one line of reason, from `findings` only: Blocked if any critical, Changes requested if any
-   important, Approved with comments if only minor, Approved if none.
+a check; `mark` says why, `evidence` has C's argument), `dropped` (ids with reasons), `notChecked` and `discussion` — the
+PR's threads before this run (`threads`: `id`, `place`, `status`, `last` — whose word is last, `lastAuthorReply`), `open` —
+ids of the open threads, `questions` — questions with no answer. Every finding has `thread` (`T<n>` or `null`); a
+follow-up to a thread also has `followUp`. In Russian, in this order:
+1. `Вердикт: <verdict>` with one line of reason, from `findings` and the open threads: Blocked if any critical, Changes
+   requested if any important or any thread in `discussion.open`, Approved with comments if only minor, Approved if none.
 2. `Статус: <status>` from `context.json`.
-3. «Подтверждённые» — each of `findings`: `<id> · <level>[ · <mark>] · <file>:<lines>` — the problem; its failure scenario
-   or the rule it breaks.
+3. «Подтверждённые» — each of `findings`: `<id> · <level>[ · <mark>][ · <thread>] · <file>:<lines>` — the problem; its
+   failure scenario or the rule it breaks; with `followUp` also «follow-up к <thread>: <followUp>».
+   Then «Обсуждение PR» — the open threads of `discussion.open` as `<id> · <place> · последнее слово: <last>`, the author's
+   answers (`lastAuthorReply`, quoted), and every `questions` entry; nothing of that → «обсуждения нет».
 4. «Подтверждено, ниже порога» — each of `belowBar` in the same form plus `<confidence>%`.
 5. «Не подтверждено» — each of `unconfirmed` in the same form plus the reason: «опровергнуто: <evidence>» or the `mark`.
 6. «Не проверялось» — every `notChecked` entry, duplicates from `dropped` as «<id> — дубль <id>», and, when `baseFallback`
    is true, «база ревью взята от main: базовая ветка PR удалена — в diff могут попасть чужие коммиты»; when `baseNote`
-   is present, `baseNote` as is.
+   is present, `baseNote` as is. A finding dropped as a repeat of a thread sits in «Не подтверждено» with its `mark`
+   («повтор T1, автор ответил: …» or «закрыто в обсуждении»).
 A section with no entries is left out, except «Не проверялось».
 
 Levels: **critical** — breaks the product, loses data, or is exploitable; **important** — a measurable regression, a
@@ -69,8 +74,8 @@ Texts: `.review-kit/run/<N>/texts.json` = `{"summary": "<2–4 sentences about t
 2. Write `texts.json` with a comment for each chosen id. No ids chosen → no `texts.json`: the approval goes out bare —
    no body and no comments anywhere.
 3. `review_publish` with `pr`, `ids`, and `verdict` (`approve` | `request-changes`) whenever the user named one — it
-   overrides the computed verdict. Without it the tool picks the verdict itself: critical or important findings, or in a
-   recheck an open or partial earlier comment → request changes, otherwise approve. It shows the review and asks the user
+   overrides the computed verdict. Without it the tool picks the verdict itself: critical or important findings, an
+   open thread of the PR, or in a recheck an open or partial earlier comment → request changes, otherwise approve. It shows the review and asks the user
    itself → section 4. An approval without chosen findings is published without any text, whatever `texts.json` says.
    Never tell the user what verdict went out before the tool's answer names it.
 

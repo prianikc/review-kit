@@ -75,6 +75,15 @@ const FINDINGS = {
           },
           "suggestion": {
             "type": "string"
+          },
+          "thread": {
+            "type": "string"
+          },
+          "authorReply": {
+            "type": "string"
+          },
+          "followUp": {
+            "type": "string"
           }
         }
       }
@@ -101,7 +110,8 @@ const VERDICTS = {
         required: ['id', 'verdict'],
         properties: {
           id: { type: 'string' },
-          verdict: { enum: ['refuted', 'confirmed', 'cannot-refute'] },
+          verdict: { enum: ['refuted', 'confirmed', 'cannot-refute', 'closed'] },
+          thread: { type: 'string' },
           evidence: { type: 'string' },
           duplicateOf: { type: 'string' },
           severity: { enum: ['critical', 'important', 'minor'] },

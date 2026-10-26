@@ -12,7 +12,8 @@ import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, hotspotAnnotations, parseMessage, reconcile, type Hotspot } from './plannotator.ts'
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
 import { overviewText, triageText } from './run/overview.ts'
-import { APPROVABLE, buildDraft, buildReplies, chosenVerdict, parseCovered, statusesBlock, undecidedAnswers, type ExplicitVerdict, type Texts, type VerdictName } from './run/review.ts'
+import { discussionOf, type Discussion, type DiscussionThread } from './run/discussion.ts'
+import { APPROVABLE, buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, statusesBlock, undecidedAnswers, type ExplicitVerdict, type Texts, type VerdictName } from './run/review.ts'
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
@@ -25,6 +26,8 @@ const SETTINGS: { options: Record<string, unknown> } = { options: {} }
 const MAX_DIALOG_OPTIONS = 4
 const CLEANUP_MIN_BRANCHES_AFTER_RUN = 5
 const KEEP = 'Оставить'
+const RECHECK_OPTION = 'Перепроверка — изменения после моего ревью'
+const FULL_REVIEW_OPTION = 'Ревью заново — весь PR'
 const BRANCH_GROUPS = [
   { kind: 'pr', title: 'Локальные ветки ревью, которые можно удалить (все коммиты есть на origin):' },
   { kind: 'no-pr', title: 'У этих веток нет PR среди последних — возможно, ваша работа без PR (все коммиты есть на origin):' },
@@ -446,6 +449,12 @@ function conflictHandoff($: EngineInterface, context: PrContext, handoff: Handof
   return `${what} Разрешаю: /pr-confl ${context.number}.`
 }
 
+async function reviewOrRecheck($: EngineInterface, { context, data }: Loaded): Promise<'review' | 'recheck' | undefined> {
+  if (context.isOwn || context.state === 'closed' || !priorComments(data)) return 'review'
+  const answer = await $.ui.ask(`У PR ${context.number} уже есть ваше ревью (статус: ${context.status}). Что запускаем?`, [RECHECK_OPTION, FULL_REVIEW_OPTION, CANCEL]).catch(() => undefined)
+  return answer === RECHECK_OPTION ? 'recheck' : answer === FULL_REVIEW_OPTION ? 'review' : undefined
+}
+
 async function startReview($: EngineInterface, pr: number, { loaded, handoff, scenario = 'review' }: { loaded: Loaded; handoff: Handoff; scenario?: 'review' | 'recheck' }): Promise<string> {
   const { context } = loaded
   if (context.state === 'closed' && !context.merged) return `PR ${pr} закрыт без слияния — ревью не делаю.`
@@ -581,22 +590,46 @@ async function runContext($: EngineInterface, pr: number): Promise<{ dir: string
   return { dir, context: JSON.parse(String(await $.fs.read(`${dir}/context.json`))) }
 }
 
-async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; id: WorkflowId; base: string; head: string; rulesRev: string; model: string; foreign: boolean; items?: TriageItem[]; mode?: 'feedback' | 'recheck'; scope?: string }): Promise<{ spec: WorkflowSpec; notes: string[] }> {
+const DISCUSSION_TRUNCATED = 'обсуждение PR обрезано по лимиту — часть комментариев агенты не видели'
+
+interface DiscussionFacts {
+  threads: DiscussionThread[]
+  questions: string[]
+  truncated: boolean
+}
+
+function discussionFacts({ threads, questions, truncated }: Discussion): DiscussionFacts {
+  return { threads, questions, truncated }
+}
+
+async function botLogins($: EngineInterface): Promise<string[]> {
+  return (await readJson<{ bots?: string[] }>($, `${$.plugin.root}/config/funnel.json`, {})).bots ?? []
+}
+
+async function loadDiscussion($: EngineInterface, pr: number, { description = true, pull }: { description?: boolean; pull?: PrData['pull'] } = {}): Promise<Discussion> {
+  const [data, bots] = await Promise.all([loadPr(await forge($), pr, pull), botLogins($)])
+  return discussionOf(data, { bots, description })
+}
+
+async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; id: WorkflowId; base: string; head: string; rulesRev: string; model: string; foreign: boolean; discussion: Discussion & { failed?: string }; items?: TriageItem[]; mode?: 'feedback' | 'recheck'; scope?: string }): Promise<{ spec: WorkflowSpec; notes: string[] }> {
   const run = runner($)
   const out = `${w.dir}/${w.id}`
   const sha = async (rev: string) => (await gitText(run, ['rev-parse', rev])).trim()
   const [base, head, rulesRev] = await Promise.all([sha(w.base), sha(w.head), sha(w.rulesRev)])
   const { rules, changedRules } = await readRules(run, { rev: rulesRev, base, head })
-  const input = await buildInput(run, { base, head, rules, items: w.items, scope: w.scope, model: w.model })
+  const input = await buildInput(run, { base, head, rules, items: w.items, scope: w.scope, model: w.model, discussion: w.discussion.text })
   const notes = [
     ...(!w.items && rules.size === 0 ? [B_SKIPPED] : []),
     ...(w.foreign && changedRules.length ? [`PR меняет правила агентов: ${changedRules.join(', ')} — ревью шло по правилам базы`] : []),
+    ...(w.discussion.truncated ? [DISCUSSION_TRUNCATED] : []),
+    ...(w.discussion.failed ? [`обсуждение PR не загрузилось (${w.discussion.failed}) — агенты его не видели`] : []),
   ]
   await runner($)(['rm', '-rf', out])
   await Promise.all([...rules].map(([path, text]) => $.fs.write(`${out}/rules/${path}`, text)))
   await $.fs.write(`${out}/rules.json`, JSON.stringify(Object.fromEntries(rules)))
   await $.fs.write(`${out}/range.json`, JSON.stringify({ base, head }))
   await $.fs.write(`${out}/input.md`, input)
+  await $.fs.write(`${out}/discussion.json`, JSON.stringify(discussionFacts(w.discussion)))
   const script = `${w.items ? 'triage' : 'review-funnel'}.js`
   await $.fs.write(`${out}/${script}`, String(await $.fs.read(`${$.plugin.root}/funnel/${script}`)))
   const copies = [...rules.keys()].map(path => `${out}/rules/${path}`)
@@ -611,7 +644,12 @@ async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; i
 
 async function prepare($: EngineInterface, pr: number, kind: PrepareKind, paths: string[]): Promise<{ workflows: WorkflowSpec[]; notes: string[]; overview?: string }> {
   const { dir, context } = await runContext($, pr)
-  const base = { pr, dir, model: context.model }
+  const discussion: Discussion & { failed?: string } = await loadDiscussion($, pr).catch((error: unknown) => {
+    const failed = (error as Error).message
+    return { threads: [], questions: [], truncated: false, text: `## DISCUSSION\nобсуждение не загрузилось: ${failed}`, failed }
+  })
+  await $.fs.write(`${dir}/discussion.json`, JSON.stringify(discussionFacts(discussion)))
+  const base = { pr, dir, model: context.model, discussion }
   const parts: Array<{ spec: WorkflowSpec; notes: string[] }> = []
   if (kind === 'review') parts.push(await writeWorkflow($, { ...base, id: 'funnel', base: context.base, head: context.head, rulesRev: context.base, foreign: true }))
   if (kind === 'recheck') {
@@ -663,11 +701,13 @@ async function collect($: EngineInterface, pr: number, id: WorkflowId, outputFil
   const states = await fileStates(run, base, head, changed)
   const lineCounts = new Map([...states].filter(([, s]) => s.text !== null).map(([path, s]) => [path, lineCount(s.text ?? '')]))
   const table = (JSON.parse(String(await $.fs.read(`${$.plugin.root}/config/funnel.json`))) as { threshold: ThresholdRow[] }).threshold
+  const discussion = await readJson<DiscussionFacts>($, `${out}/discussion.json`, { threads: [], questions: [], truncated: false })
   const result = collectFindings({
     raw, changed, lineCounts, rules, skipped: notAttached(states), table, ...(await workflowNotes($, out)),
     ...(id === 'delta' ? { minSeverity: 'important' as Severity } : {}),
+    threads: discussion.threads, repeats: id !== 'fix-check',
   })
-  const json = JSON.stringify(result, null, 2)
+  const json = JSON.stringify({ ...result, discussion: { ...discussion, open: openThreads(discussion.threads) } }, null, 2)
   await $.fs.write(id === 'fix-check' ? `${out}/findings.json` : `${dir}/findings.json`, json)
   return json
 }
@@ -723,7 +763,8 @@ async function publishReview($: EngineInterface, { pr, ids, from, verdict: asked
   const summary = [texts.summary?.trim() ?? '', ...(statuses.length ? [statusesBlock(statuses, prior)] : [])].filter(Boolean).join('\n\n')
   const provider = await forge($)
   const covered = parseCovered(await gitText(runner($), ['diff', '-U0', '--no-color', '--no-renames', context.base, context.head]))
-  const verdict: VerdictName = chosenVerdict({ selected, statuses, decision, verdict: asked })
+  const discussion = await readJson<DiscussionFacts>($, `${dir}/discussion.json`, { threads: [], questions: [], truncated: false })
+  const verdict: VerdictName = chosenVerdict({ selected, statuses, decision, verdict: asked, openThreads: openThreads(discussion.threads, statuses).length })
   const { draft, notes } = buildDraft({ selected, texts: { ...texts, summary }, verdict, approve: APPROVABLE.includes(verdict), covered, capabilities: provider.capabilities })
   const bare = draft.verdict === 'approve' && !draft.body.trim() && draft.comments.length === 0
   const inline = draft.comments.map(c => `• ${c.path}:${c.line} — ${c.body}`).join('\n')
@@ -743,12 +784,13 @@ async function guideSource($: EngineInterface, target: GuideTarget): Promise<Gui
   const provider = await forge($)
   const pull = await provider.getPull(target.number)
   const dir = await runDir($, pull.number)
+  const discussion = await loadDiscussion($, pull.number, { description: false, pull }).then(found => found.text, (error: unknown) => `## DISCUSSION\nобсуждение не загрузилось: ${(error as Error).message}`)
   const active = (await activeRun($)) === pull.number ? await readJson<{ base?: string; head?: string; baseFallback?: boolean; baseNote?: string; scenario?: string }>($, `${dir}/context.json`, {}) : {}
   const recheck = active.scenario === 'recheck' ? await readJson<{ base?: string; mode?: string; note?: string }>($, `${dir}/recheck.json`, {}) : {}
-  if (active.head && recheck.base && recheck.mode) return prSource(pull, { base: recheck.base, head: active.head, baseFallback: Boolean(active.baseFallback), baseNote: active.baseNote, recheck: { mode: recheck.mode, note: recheck.note } })
-  if (active.base && active.head) return prSource(pull, { base: active.base, head: active.head, baseFallback: Boolean(active.baseFallback), baseNote: active.baseNote })
+  if (active.head && recheck.base && recheck.mode) return prSource(pull, { base: recheck.base, head: active.head, baseFallback: Boolean(active.baseFallback), baseNote: active.baseNote, recheck: { mode: recheck.mode, note: recheck.note }, discussion })
+  if (active.base && active.head) return prSource(pull, { base: active.base, head: active.head, baseFallback: Boolean(active.baseFallback), baseNote: active.baseNote, discussion })
   const { target: head } = await fetchHead(run, { number: pull.number, headRef: pull.headRef, headSha: pull.headSha, baseRef: pull.baseRef, own: false, pullRef: provider.pullRef(pull.number) })
-  return prSource(pull, { head, ...(await reviewBase(run, { final: head, baseRef: pull.baseRef })) })
+  return prSource(pull, { head, ...(await reviewBase(run, { final: head, baseRef: pull.baseRef })), discussion })
 }
 
 async function prepareGuide($: EngineInterface, text: string): Promise<string> {
@@ -1232,7 +1274,10 @@ export const register: Register = (on, options) => {
     if (!Number.isInteger(pr) || pr < 1) return { text: 'Использование: /pr-review <номер PR> | /pr-review stop' }
 
     try {
-      return { text: await startReview($, pr, { loaded: await prContext($, pr), handoff: 'submit' }) }
+      const loaded = await prContext($, pr)
+      const scenario = await reviewOrRecheck($, loaded)
+      if (!scenario) return { text: 'Отменено: дерево не тронуто.' }
+      return { text: await startReview($, pr, { loaded, handoff: 'submit', scenario }) }
     } catch (error) {
       return { text: `review-kit: ${(error as Error).message}` }
     }

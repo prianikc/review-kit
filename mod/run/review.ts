@@ -1,11 +1,13 @@
 import type { Reply, ReviewDraft } from '../forge/types.ts'
 import { MARKER, type IntakeItem } from '../status.ts'
 import type { Finding } from './findings.ts'
+import type { DiscussionThread } from './discussion.ts'
 
 export const APPROVABLE: readonly VerdictName[] = ['Approved', 'Approved with comments']
 const DEFAULT_CHANGES_BODY = 'Нужны правки — см. комментарии.'
 const DEFAULT_EMPTY_BODY = 'Замечаний нет.'
 const UNRESOLVED = ['open', 'partial', 'answered']
+const SETTLED = ['closed', 'accepted']
 const STATUS_WORDS: Record<string, string> = { open: 'не закрыто', partial: 'частично', unknown: 'не проверено', accepted: 'закрыто — принят ответ автора' }
 const QUOTE_LIMIT = 200
 const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/
@@ -25,10 +27,16 @@ export function verdictName(findings: Array<{ severity: string }>, statuses: Arr
   return levels.size ? 'Approved with comments' : 'Approved'
 }
 
-export function chosenVerdict({ selected, statuses = [], decision, verdict }: { selected: Array<{ severity: string }>; statuses?: Array<{ class: string; severity?: string }>; decision?: string; verdict?: ExplicitVerdict }): VerdictName {
+export function chosenVerdict({ selected, statuses = [], decision, verdict, openThreads = 0 }: { selected: Array<{ severity: string }>; statuses?: Array<{ class: string; severity?: string }>; decision?: string; verdict?: ExplicitVerdict; openThreads?: number }): VerdictName {
   if (verdict === 'approve' || decision === 'approved') return selected.length ? 'Approved with comments' : 'Approved'
   if (verdict === 'request-changes' || decision === 'annotated') return 'Changes requested'
-  return verdictName(selected, statuses)
+  const computed = verdictName(selected, statuses)
+  return openThreads > 0 && APPROVABLE.includes(computed) ? 'Changes requested' : computed
+}
+
+export function openThreads(threads: DiscussionThread[], statuses: Array<{ id: string; class: string }> = []): string[] {
+  const settled = new Set(statuses.filter(s => SETTLED.includes(s.class)).map(s => s.id.split('/').at(-1)))
+  return threads.filter(thread => thread.status === 'open' && !thread.commentIds.some(id => settled.has(id))).map(thread => thread.id)
 }
 
 export function undecidedAnswers(statuses: Array<{ id: string; class: string }>): string[] {

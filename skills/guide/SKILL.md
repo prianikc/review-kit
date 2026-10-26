@@ -14,7 +14,8 @@ This is a guide, not a review: no verdict, no levels, no publishing, no tree swi
 
 1. `guide_prepare` with `target`. An answer starting with `review-kit:` → show it and stop.
 2. The answer is `guide: <path>`, the heading line and, inside a review or recheck run of that PR, `hotspots: <path>`. Read the whole file with Read (in parts when it is long): the
-   heading and URL, `MESSAGE` (PR description or commit message), `COMMITS`, `STAT`, `NOTES` and `DIFF`.
+   heading and URL, `MESSAGE` (PR description or commit message), `COMMITS`, `STAT`, `NOTES`, `DISCUSSION` (a PR's
+   threads and comments so far) and `DIFF`.
 3. Write the guide in Russian, right in the chat, short enough to fit one screen:
    - **Heading** — the heading line, then the URL when there is one.
    - «Сообщение» — the PR description or the commit message quoted as is (`>`); empty → «описания нет». For a PR also
@@ -25,6 +26,8 @@ This is a guide, not a review: no verdict, no levels, no publishing, no tree swi
    - «Узкие места» — at most 5 bullets `<file>:<line> — what to look at and why`: tricky logic, error and edge cases,
      concurrency, data and migrations, security, changed public contracts, changed behaviour without tests. Nothing
      stands out → «не видно». These are pointers for the reader, not findings.
+   - «Обсуждение» (a PR only) — open threads as `T<n> · <path>:<line> — <the point in a few words>`, the author's answers
+     and questions with no answer, at most 5 bullets; `DISCUSSION` says «обсуждения нет» → «обсуждения нет».
    - «Размер» — one line from `STAT`: files, `+added −removed`. Every `NOTES` entry follows; a file whose diff was not
      attached is named as not covered by the guide.
 4. The answer had `hotspots: <path>` → write that file with Write: `{"items": [{"file": "<path from the repository
