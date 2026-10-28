@@ -2,7 +2,6 @@ import type { Comment, ForgeProvider, PullRequest, Review, Thread } from './forg
 
 export const MARKER = '<!-- review-kit -->'
 export const ACTIONABLE: readonly Scenario[] = ['feedback', 'conflict', 'review', 'recheck']
-export const OPEN_ALL = 'Открыть все'
 
 export type Scenario = 'closed' | 'conflict' | 'feedback' | 'none-own' | 'review' | 'recheck' | 'wait-author'
 
@@ -224,9 +223,17 @@ export function rowLine(row: ListRow): string {
   return `#${row.number} ${row.status}${row.conflicted ? ' · конфликт' : ''} · ${row.author} — ${row.title}`
 }
 
-export function prMenu(labels: readonly string[], max: number): string[] | undefined {
-  if (labels.length === 1) return [...labels]
-  return labels.length + 1 <= max ? [...labels, `${OPEN_ALL} (${labels.length})`] : undefined
+export function prListText(rows: readonly ListRow[], truncated: boolean): string {
+  if (rows.length === 0) return 'Открытых PR нет.'
+  const due = rows.filter(row => ACTIONABLE.includes(row.scenario))
+  const waiting = rows.filter(row => !ACTIONABLE.includes(row.scenario))
+  const sections = [
+    due.length ? `PR на проверку:\n${due.map(rowLine).join('\n')}` : '',
+    waiting.length ? `PR, ожидающие решения:\n${waiting.map(rowLine).join('\n')}` : '',
+    due.length ? 'Взять PR: /pr <номер> · все из «на проверку» сразу: /pr all' : 'Делать нечего.',
+    truncated ? `Прочитано ${PULL_LIMIT} открытых PR — это предел одного запроса; если PR больше, остальные — /pr <номер>` : '',
+  ]
+  return sections.filter(Boolean).join('\n\n')
 }
 
 export function placeAll(rows: ReadonlyArray<{ number: number; isOwn: boolean; headRef: string }>, { mainBranch, hasOrca }: { mainBranch: string; hasOrca: boolean }): { tabs: number[]; here: number[] } {

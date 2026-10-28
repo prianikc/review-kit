@@ -3,11 +3,11 @@ import { allowsManualCommit, classifyBash, guardText, opensCommitWindow } from '
 import { manifestPaths, MAX_RETURNS, parseManifest, parseRole, unreadFiles, type GatedAgent } from './gate.ts'
 import { ADAPTERS, createProvider, selectProvider, withTimeout, type ExplicitConfig } from './forge/index.ts'
 import type { ForgeProvider } from './forge/types.ts'
-import { ACTIONABLE, contextOf, OPEN_ALL, placeAll, prMenu, pullRows, rowLine, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type PrContext, type PrData } from './status.ts'
+import { ACTIONABLE, contextOf, placeAll, prListText, pullRows, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type PrContext, type PrData } from './status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, type TriageItem } from './run/input.ts'
 import { readRules } from './run/rules.ts'
 import { collectFindings, finishTriage, reviewPool, type Finding, type FindingsResult, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
-import { applySwitch, fetchHead, reviewBase, branchCandidates, createReviewWorktree, excludeFile, withExcluded, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, showFile, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
+import { applySwitch, fetchHead, reviewBase, branchCandidates, createReviewWorktree, excludeFile, withExcluded, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, showFile, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, switchToBase, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
 import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, hotspotAnnotations, parseMessage, reconcile, type Hotspot } from './plannotator.ts'
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
@@ -23,8 +23,6 @@ const CONFIRM_TEXT_LIMIT = 6000
 const HTTP_TIMEOUT_MS = 30_000
 const CONFIG_PATH = '.claude/review-kit.local.json'
 const SETTINGS: { options: Record<string, unknown> } = { options: {} }
-const MAX_DIALOG_OPTIONS = 4
-const CLEANUP_MIN_BRANCHES_AFTER_RUN = 5
 const KEEP = 'Оставить'
 const RECHECK_OPTION = 'Перепроверка — изменения после моего ревью'
 const FULL_REVIEW_OPTION = 'Ревью заново — весь PR'
@@ -319,6 +317,12 @@ async function offerWorktrees($: EngineInterface, { worktrees }: { worktrees: Re
 async function releaseWorktree($: EngineInterface, { pr, headRef }: { pr: number; headRef: string }): Promise<string | undefined> {
   const held = await worktreeHolder(runner($), headRef, isActive($))
   if (!held) return undefined
+  const finished = !held.active && !held.dirty
+  if (finished) {
+    const result = await removeWorktrees(runner($), [held.path], { confirmed: false, isActive: isActive($) })
+    await closeTabs($, result.removed).catch(() => 0)
+    if (result.removed.length) return undefined
+  }
 
   const changes = held.dirty ? ' В нём есть незакоммиченные изменения — они удалятся.' : ''
   const question = held.active
@@ -376,15 +380,6 @@ async function offerCleanup($: EngineInterface, { minBranches }: { minBranches: 
   return done.length ? `Уборка: ${done.join('; ')}.` : 'Уборка: ничего не тронуто.'
 }
 
-async function withCleanup($: EngineInterface, text: string, minBranches: number): Promise<string> {
-  try {
-    const cleanup = await offerCleanup($, { minBranches })
-    return cleanup ? `${text}\n${cleanup}` : text
-  } catch (error) {
-    return `${text}\nуборка пропущена: ${(error as Error).message}`
-  }
-}
-
 function closedText(context: PrContext): string {
   return context.merged ? `PR ${context.number} влит — сценариев нет. Отчёт по нему: /pr-review ${context.number}` : `PR ${context.number} закрыт без слияния — сценариев нет.`
 }
@@ -413,23 +408,7 @@ async function routePr($: EngineInterface, pr: number | undefined, handoff: Hand
     if (stop) return stop
 
     const { rows, truncated } = await pullRows(await forge($))
-    const actionable = rows.filter(row => ACTIONABLE.includes(row.scenario))
-    const line = rowLine
-    const tail = truncated ? '\nПрочитано 50 открытых PR — это предел одного запроса; если PR больше, остальные — /pr <номер>' : ''
-    if (actionable.length === 0) return withCleanup($, rows.length ? `Открытые PR:\n${rows.map(line).join('\n')}\nДелать нечего.${tail}` : 'Открытых PR нет.', 0)
-    const labels = actionable.map(line)
-    const others = rows.filter(row => !actionable.includes(row))
-    const rest = others.length ? `\nОстальные:\n${others.map(line).join('\n')}` : ''
-    const menu = prMenu(labels, MAX_DIALOG_OPTIONS)
-    if (!menu) return `PR, по которым есть дело:\n${labels.join('\n')}${rest}\nВыберите: /pr <номер>\nВсе сразу: /pr all${tail}`
-
-    const chosen = String(await $.ui.ask('Какой PR берём?', actionable.length === 1 ? [...menu, CANCEL] : menu).catch(() => ''))
-    if (chosen.startsWith(OPEN_ALL)) return openAll($)
-    const row = actionable[labels.indexOf(chosen)]
-    if (row) return routePr($, row.number, handoff)
-
-    const typed = /^#?(\d+)$/.exec(chosen.trim())
-    return typed ? routePr($, Number(typed[1]), handoff) : withCleanup($, 'Отменено.', 0)
+    return prListText(rows, truncated)
   }
 
   const loaded = await prContext($, pr)
@@ -814,6 +793,18 @@ async function dropReviewWorktree($: EngineInterface): Promise<string | undefine
   if (result.removed.length) return `worktree ${here} удалён — ревью закончено, вкладку можно закрыть; команды в ней больше не работают`
   const reason = result.skipped[0]?.reason
   return reason && reason !== 'не worktree ревью' ? `worktree ${here} оставлен (${reason}) — уберёт /pr cleanup` : undefined
+}
+
+async function dropReviewBranch($: EngineInterface, headRef: string | undefined): Promise<string | undefined> {
+  const run = runner($)
+  if (!(await inMainTree(run))) return undefined
+  const current = (await gitText(run, ['branch', '--show-current'])).trim()
+  if (current === 'main' || (current !== '' && current !== headRef)) return undefined
+  const problem = await switchToBase(run)
+  if (problem) return `дерево оставлено на ${current || 'коммите PR'} (${problem}) — уберёт /pr cleanup`
+  if (!current) return 'дерево переключено на main'
+  const { deleted, skipped } = await deleteBranches(run, [current])
+  return deleted.length ? `дерево переключено на main, ветка ${current} удалена` : `дерево переключено на main; ветка ${current} оставлена (${skipped[0]?.reason ?? 'причина неизвестна'}) — уберёт /pr cleanup`
 }
 
 async function publishReplies($: EngineInterface, pr: number): Promise<string> {
@@ -1403,10 +1394,12 @@ export const register: Register = (on, options) => {
     if ((await activeRun($)) !== pr) return { result: `not finished: нет активного прогона PR ${pr}` }
 
     const scenario = (await runFacts($))?.scenario
+    const { headRef } = await readJson<{ headRef?: string }>($, `${await runDir($, pr)}/context.json`, {})
     await finishRun($, pr, 'done')
-    const text = await withCleanup($, 'finished', CLEANUP_MIN_BRANCHES_AFTER_RUN)
-    const dropped = scenario && READ_ONLY_SCENARIOS.includes(scenario) ? await dropReviewWorktree($).catch(error => `worktree не удалён: ${(error as Error).message} — уберёт /pr cleanup`) : undefined
-    return { result: dropped ? `${text}\n${dropped}` : text }
+    if (!scenario || !READ_ONLY_SCENARIOS.includes(scenario)) return { result: 'finished' }
+    const dropped = await dropReviewWorktree($).catch(error => `worktree не удалён: ${(error as Error).message} — уберёт /pr cleanup`)
+      ?? await dropReviewBranch($, headRef).catch(error => `ветка не удалена: ${(error as Error).message} — уберёт /pr cleanup`)
+    return { result: dropped ? `finished\n${dropped}` : 'finished' }
   })
 
   on('tool.call', { tool: 'mcp__review-kit__review_plannotator' }, async ($, e) => {

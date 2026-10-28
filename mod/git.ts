@@ -371,6 +371,12 @@ export async function branchCandidates(run: Run, { open, closed, me }: { open: P
   return rows
 }
 
+export async function switchToBase(run: Run): Promise<string | undefined> {
+  if ((await gitText(run, ['status', '--porcelain', '-uno', '--ignore-submodules=all'])).trim()) return 'в дереве изменены отслеживаемые файлы'
+  const result = await run(['git', 'switch', '-q', BASE_BRANCH])
+  return result.exitCode === 0 ? undefined : `git switch не удался: ${result.stderr.trim()}`
+}
+
 export async function deleteBranches(run: Run, names: string[]): Promise<{ deleted: string[]; skipped: Array<{ name: string; reason: string }> }> {
   const busy = await busyBranches(run)
   const deleted: string[] = []

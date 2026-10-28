@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ACTIONABLE, contextOf, rowLine, OPEN_ALL, placeAll, prMenu, pullRows, splitHere, statusOf, intakeItems, loadPr, MARKER, priorComments, scenarioOf, type PrData } from './status.ts'
+import { ACTIONABLE, contextOf, rowLine, placeAll, prListText, pullRows, splitHere, statusOf, intakeItems, loadPr, MARKER, priorComments, scenarioOf, type ListRow, type PrData } from './status.ts'
 import { fakeProvider } from './forge/fake.ts'
 import type { Comment, PullRequest, Review, Thread } from './forge/types.ts'
 
@@ -167,11 +167,25 @@ test('pullRows: все открытые, с делом — первыми; ро�
   assert.equal((await pullRows(many)).truncated, true)
 })
 
-test('prMenu: один PR — без «все», 2–3 — «Открыть все (N)» последним, больше — текстом', () => {
-  assert.deepEqual(prMenu(['#1'], 4), ['#1'])
-  assert.deepEqual(prMenu(['#1', '#2'], 4), ['#1', '#2', `${OPEN_ALL} (2)`])
-  assert.deepEqual(prMenu(['#1', '#2', '#3'], 4), ['#1', '#2', '#3', `${OPEN_ALL} (3)`])
-  assert.equal(prMenu(['#1', '#2', '#3', '#4'], 4), undefined)
+const row = (number: number, scenario: ListRow['scenario'], status: ListRow['status']): ListRow => ({ number, title: `T${number}`, author: 'bob', isOwn: false, headRef: 'f', scenario, status, conflicted: false })
+
+test('prListText: «на проверку» и «ожидающие решения» — текстом, без выбора', () => {
+  const rows = [row(1, 'review', 'на проверке'), row(2, 'feedback', 'есть замечания'), row(3, 'wait-author', 'ждём автора')]
+  assert.equal(prListText(rows, false), [
+    'PR на проверку:\n#1 на проверке · bob — T1\n#2 есть замечания · bob — T2',
+    'PR, ожидающие решения:\n#3 ждём автора · bob — T3',
+    'Взять PR: /pr <номер> · все из «на проверку» сразу: /pr all',
+  ].join('\n\n'))
+})
+
+test('prListText: только «на проверку» — без пустой секции', () => {
+  assert.equal(prListText([row(1, 'recheck', 'перепроверка')], false), 'PR на проверку:\n#1 перепроверка · bob — T1\n\nВзять PR: /pr <номер> · все из «на проверку» сразу: /pr all')
+})
+
+test('prListText: только ожидающие — «Делать нечего.»; пусто — «Открытых PR нет.»; 50 PR — подсказка про предел', () => {
+  assert.equal(prListText([row(3, 'none-own', 'готов к слиянию')], false), 'PR, ожидающие решения:\n#3 готов к слиянию · bob — T3\n\nДелать нечего.')
+  assert.equal(prListText([], false), 'Открытых PR нет.')
+  assert.match(prListText([row(1, 'review', 'на проверке')], true), /Прочитано 50 открытых PR/)
 })
 
 test('placeAll: свой PR на ветке основного дерева — здесь, остальное — во вкладки; без Orca — всё здесь', () => {

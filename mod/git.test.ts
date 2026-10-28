@@ -6,7 +6,7 @@ import { binaryFiles, changedFiles, fileDiff, showFile, snapshot, treeEntries } 
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { applySwitch, claudeCodeChanges, planSwitch } from './git.ts'
-import { branchCandidates, commitRound, deleteBranches, foreignChanges, headShift, messageProblem, pushRound, reviewStashes, roundState, stashAction } from './git.ts'
+import { branchCandidates, commitRound, deleteBranches, switchToBase, foreignChanges, headShift, messageProblem, pushRound, reviewStashes, roundState, stashAction } from './git.ts'
 import { createReviewWorktree, removeWorktrees, reviewed, shellQuote, withExcluded, worktreeName } from './git.ts'
 import { commitMerge, mergeBase, mergeProblem, operationInProgress } from './git.ts'
 import { existsSync } from 'node:fs'
@@ -455,4 +455,16 @@ test('removeWorktrees: изменения в worktree без подтвержд�
   const result = await removeWorktrees(r.run, [path], { confirmed: false, isActive: async () => false })
   assert.deepEqual(result.removed, [])
   assert.match(result.skipped[0].reason, /есть изменения/)
+})
+
+test('switchToBase: чистое дерево — на main; изменены отслеживаемые файлы — отказ, ветка та же', async () => {
+  const r = repo()
+  r.commit('a.txt', '1', 'base')
+  r.git('switch', '-qc', 'feat'); r.commit('a.txt', '2', 'pr')
+  writeFileSync(join(r.dir, 'a.txt'), 'грязно')
+  assert.match(String(await switchToBase(r.run)), /изменены отслеживаемые файлы/)
+  assert.equal(r.git('branch', '--show-current'), 'feat')
+  r.git('checkout', '-q', '--', 'a.txt')
+  assert.equal(await switchToBase(r.run), undefined)
+  assert.equal(r.git('branch', '--show-current'), 'main')
 })
