@@ -6,7 +6,7 @@ import { ACTIONABLE, commentIds, contextOf, driftOf, placeAll, prListText, pullR
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, type TriageItem } from './run/input.ts'
 import { readRules } from './run/rules.ts'
 import { collectFindings, finishTriage, reviewPool, type Finding, type FindingsResult, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
-import { applySwitch, fetchHead, reviewBase, branchCandidates, createReviewWorktree, excludeFile, withExcluded, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, showFile, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, removeWorktrees, reviewStashes, roundState, snapshot, stashAction, switchToBase, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
+import { applySwitch, fetchHead, reviewBase, createReviewWorktree, excludeFile, withExcluded, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, showFile, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, leftoverRuns, removeWorktrees, roundState, snapshot, stashAction, STASH_GONE, switchBack, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
 import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, hotspotAnnotations, parseMessage, reconcile, type Hotspot } from './plannotator.ts'
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
@@ -20,16 +20,11 @@ const CONFIRM_TEXT_LIMIT = 6000
 const HTTP_TIMEOUT_MS = 30_000
 const CONFIG_PATH = '.claude/review-kit.local.json'
 const ROADMAP_DIR = 'docs/roadmap'
+const ABANDONED_AFTER_MIN = 1440
 const SETTINGS: { options: Record<string, unknown> } = { options: {} }
-const KEEP = 'Оставить'
 const RECHECK_OPTION = 'Перепроверка — изменения после моего ревью'
 const FULL_REVIEW_OPTION = 'Ревью заново — весь PR'
-const BRANCH_GROUPS = [
-  { kind: 'pr', title: 'Локальные ветки ревью, которые можно удалить (все коммиты есть на origin):' },
-  { kind: 'no-pr', title: 'У этих веток нет PR среди последних — возможно, ваша работа без PR (все коммиты есть на origin):' },
-]
 const CANCEL = 'Отмена'
-const WORKTREE_TITLE = 'Worktree законченных ревью (вкладки pr-tab) — удалить вместе с ненужными ветками?'
 const CONTINUE_THERE = 'Продолжить там'
 const CLEAR = 'Очистить'
 const CONTINUE_HEAD = 'Продолжить с текущим HEAD'
@@ -246,6 +241,13 @@ async function manifestOf($: EngineInterface, agent: GatedAgent): Promise<string
   return $.fs.read(`${await gateDir($, agent)}/manifest-${agent.role}.txt`).then(text => manifestPaths(String(text)), () => undefined)
 }
 
+interface RunReturn {
+  headRef?: string
+  returnTo?: string
+  stash?: string | null
+  stashSha?: string | null
+}
+
 interface SavedStash {
   name: string
   sha: string
@@ -276,7 +278,7 @@ async function switchOrRestore($: EngineInterface, { plan, stash }: { plan: Swit
   } catch (error) {
     if (!stash) throw error
     const after = (await gitText(run, ['rev-parse', 'HEAD'])).trim()
-    if (after !== before) throw new Error(`${(error as Error).message}; дерево уже на коммите PR; stash «${stash.name}» не применён — вернитесь (git switch -) и примените его через /pr cleanup`)
+    if (after !== before) throw new Error(`${(error as Error).message}; дерево уже на коммите PR; stash «${stash.name}» не применён — вернитесь (git switch -) и примените: git stash pop`)
     const restored = await stashAction(run, stash.sha, 'apply')
     const note = restored.ok ? 'изменения возвращены из stash' : restored.conflict ? `изменения из stash «${stash.name}» ${restored.error}` : `изменения остались в stash «${stash.name}»: ${restored.error}`
     throw new Error(`${(error as Error).message}; ${note}`)
@@ -286,30 +288,6 @@ async function switchOrRestore($: EngineInterface, { plan, stash }: { plan: Swit
 async function prContext($: EngineInterface, pr: number): Promise<Loaded> {
   const data = await loadPr(await forge($), pr)
   return { context: contextOf(data, scenarioOf(data)), data }
-}
-
-interface ReviewWorktreeCandidate {
-  path: string
-  pr: number
-  branch: string
-  deleteBranch: boolean
-}
-
-function worktreeLine({ pr, path, branch, deleteBranch }: ReviewWorktreeCandidate): string {
-  const fate = !branch ? 'без ветки' : deleteBranch ? `ветка ${branch} удалится` : `ветка ${branch} останется`
-  return `#${pr} ${path.split('/').pop()} — ${fate}`
-}
-
-async function offerWorktrees($: EngineInterface, { worktrees }: { worktrees: ReviewWorktreeCandidate[] }): Promise<string | undefined> {
-  const remove = `Удалить все (${worktrees.length})`
-  if ((await $.ui.ask(`${WORKTREE_TITLE}\n${worktrees.map(worktreeLine).join('\n')}`, [remove, KEEP]).catch(() => KEEP)) !== remove) return undefined
-  const run = runner($)
-  const result = await removeWorktrees(run, worktrees.map(w => w.path), { confirmed: false, isActive: isActive($) })
-  const branches = worktrees.filter(w => w.deleteBranch && result.removed.includes(w.path)).map(w => w.branch)
-  const deleted = branches.length ? (await deleteBranches(run, branches)).deleted : []
-  const tabs = await closeTabs($, result.removed).catch(() => 0)
-  const skipped = result.skipped.length ? `, пропущено: ${result.skipped.map(s => `${s.path.split('/').pop()} (${s.reason})`).join(', ')}` : ''
-  return `удалено worktree: ${result.removed.length}${deleted.length ? `, их веток: ${deleted.length}` : ''}${tabs ? `, закрыто вкладок Orca: ${tabs}` : ''}${skipped}`
 }
 
 async function releaseWorktree($: EngineInterface, { pr, headRef }: { pr: number; headRef: string }): Promise<string | undefined> {
@@ -336,46 +314,41 @@ async function releaseWorktree($: EngineInterface, { pr, headRef }: { pr: number
   return result.removed.length ? undefined : `review-kit: worktree ${held.path} не удалён — ${result.skipped[0]?.reason ?? 'причина неизвестна'}. PR ${pr} не начат.`
 }
 
-async function offerCleanup($: EngineInterface, { minBranches }: { minBranches: number }): Promise<string> {
+function isLive($: EngineInterface): IsActive {
+  return async (path, pr) => (await isActive($)(path, pr)) && (await runner($)(['find', `${path}/.review-kit/run/${pr}/session.json`, '-mmin', `-${ABANDONED_AFTER_MIN}`])).stdout.trim() !== ''
+}
+
+async function dropFinishedTabs($: EngineInterface): Promise<number> {
   const run = runner($)
   const provider = await forge($)
-  const [open, closed, me] = await Promise.all([provider.listPulls('open'), provider.listPulls('closed'), provider.currentUser()])
-  const found = {
-    branches: await branchCandidates(run, { open, closed, me }),
-    stashes: await reviewStashes(run),
-    worktrees: (await inMainTree(run)) ? await worktreeCandidates(run, { open, me, isActive: isActive($) }) : [],
-  }
-  const worktrees = found.worktrees ?? []
-  const branchesDue = found.branches.length > minBranches
-  const stashes = minBranches === 0 || branchesDue ? found.stashes : []
-  if (worktrees.length === 0 && !branchesDue && stashes.length === 0) return ''
+  const [open, me] = await Promise.all([provider.listPulls('open'), provider.currentUser()])
+  const trees = await worktreeCandidates(run, { open, me, isActive: isLive($) })
+  if (trees.length === 0) return 0
+  const result = await removeWorktrees(run, trees.map(tree => tree.path), { confirmed: false, isActive: isLive($) })
+  const branches = trees.filter(tree => tree.deleteBranch && result.removed.includes(tree.path)).map(tree => tree.branch)
+  if (branches.length) await deleteBranches(run, branches)
+  await closeTabs($, result.removed).catch(() => 0)
+  return result.removed.length
+}
 
-  const done: string[] = []
-  const removed = worktrees.length ? await offerWorktrees($, { worktrees }) : undefined
-  if (removed) done.push(removed)
-
-  for (const group of branchesDue ? BRANCH_GROUPS : []) {
-    const branches = found.branches.filter(b => b.kind === group.kind)
-    if (branches.length === 0) continue
-    const remove = `Удалить все (${branches.length})`
-    const list = branches.map(b => `${b.name} — ${b.reason}`).join('\n')
-    if ((await $.ui.ask(`${group.title}\n${list}`, [remove, KEEP]).catch(() => KEEP)) !== remove) continue
-    const result = await deleteBranches(run, branches.map(b => b.name))
-    done.push(`удалено веток: ${result.deleted.length}${result.skipped.length ? `, пропущено: ${result.skipped.map(item => item.name).join(', ')}` : ''}`)
+async function selfClean($: EngineInterface): Promise<string> {
+  try {
+    const run = runner($)
+    if (!(await inMainTree(run)) || (await activeRun($)) !== undefined) return ''
+    const root = await projectRoot($)
+    const live = isLive($)
+    const names = (await run(['ls', '-1', `${root}/.review-kit/run`])).stdout.split('\n').filter(Boolean)
+    const numbers = names.filter(name => /^\d+$/.test(name)).map(Number)
+    const active = new Set((await Promise.all(numbers.map(async pr => ((await live(root, pr)) ? pr : null)))).filter((pr): pr is number => pr !== null))
+    const runs = leftoverRuns(names, { active })
+    for (const pr of runs) await deleteRunDir($, pr)
+    const guides = (await run(['find', `${root}/.review-kit/guide`, '-name', '*.md', '-mmin', `+${ABANDONED_AFTER_MIN}`, '-print', '-delete'])).stdout.split('\n').filter(Boolean).length
+    const tabs = await dropFinishedTabs($).catch(() => 0)
+    const parts = [runs.length ? `папок прогонов ${runs.length}` : '', guides ? `гайдов ${guides}` : '', tabs ? `рабочих копий вкладок ${tabs}` : ''].filter(Boolean)
+    return parts.length ? `Убрано за прошлыми прогонами: ${parts.join(', ')}.` : ''
+  } catch {
+    return ''
   }
-
-  for (const stash of stashes) {
-    const branch = (await runner($)(['git', 'branch', '--show-current'])).stdout.trim()
-    const clean = (await runner($)(STATUS_ARGV)).stdout.trim() === ''
-    const canApply = clean && stash.branch !== '' && branch === stash.branch
-    const hint = canApply || !stash.branch ? '' : ` — чтобы применить, переключитесь на ${stash.branch}${clean ? '' : ' и уберите изменения'}`
-    const options = canApply ? [KEEP, 'Применить', 'Удалить'] : [KEEP, 'Удалить']
-    const answer = await $.ui.ask(`Stash «${stash.message}» (из ветки ${stash.branch || '—'})${hint}`, options).catch(() => KEEP)
-    if (answer === KEEP) continue
-    const result = await stashAction(run, stash.sha, answer === 'Удалить' ? 'drop' : 'apply')
-    done.push(result.ok ? `stash «${stash.message}»: ${answer.toLowerCase()}` : result.conflict ? `stash «${stash.message}» ${result.error}` : `stash «${stash.message}» не применён: ${result.error}`)
-  }
-  return done.length ? `Уборка: ${done.join('; ')}.` : 'Уборка: ничего не тронуто.'
 }
 
 function closedText(context: PrContext): string {
@@ -401,6 +374,12 @@ async function askAboutActive($: EngineInterface, pr: number | undefined): Promi
 }
 
 async function routePr($: EngineInterface, pr: number | undefined, handoff: Handoff): Promise<string> {
+  const cleaned = await selfClean($)
+  const text = await routeOnce($, pr, handoff)
+  return cleaned ? `${text}\n${cleaned}` : text
+}
+
+async function routeOnce($: EngineInterface, pr: number | undefined, handoff: Handoff): Promise<string> {
   if (pr === undefined) {
     const stop = await askAboutActive($, undefined)
     if (stop) return stop
@@ -489,6 +468,7 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
   if (saved === 'cancel') return 'Отменено: дерево не тронуто.'
   const stash = saved?.name ?? null
 
+  const returnTo = (await gitText(run, ['branch', '--show-current'])).trim() || (await gitText(run, ['rev-parse', 'HEAD'])).trim()
   const switched = await switchOrRestore($, { plan, stash: saved })
   await deleteRunDir($, pr)
   const dir = `${root}/.review-kit/run/${pr}`
@@ -499,13 +479,13 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
   }
   if (scenario === 'recheck') {
     const prior = priorComments(loaded.data)
-    if (!prior) throw new Error(`моего ревью в PR ${pr} нет — перепроверять нечего; дерево на коммите PR${stash ? `, ваши изменения в stash «${stash}» — вернуть: /pr cleanup` : ''}`)
+    if (!prior) throw new Error(`моего ревью в PR ${pr} нет — перепроверять нечего; дерево на коммите PR${stash ? `, ваши изменения в stash «${stash}» — вернуть: git switch ${returnTo} и git stash pop` : ''}`)
     const base = await recheckBase(runner($), { lastCommit: prior.review.commitSha, head: switched.head, baseRef: context.baseRef })
     await $.fs.write(`${dir}/recheck.json`, JSON.stringify({ ...base, reviewId: prior.review.id, prior: prior.prior }, null, 2))
   }
   const plannotator = await runner($)(['plannotator', '--version']).then(result => result.exitCode === 0, () => false)
   const roadmap = context.isOwn ? { roadmap: `${await roadmapDir($)}/pr-${pr}-review-fixes.md` } : {}
-  await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, model, scenario, plannotator, ...roadmap }))
+  await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, stashSha: saved?.sha ?? null, returnTo, model, scenario, plannotator, ...roadmap }))
   await openRun($, { pr, context, head: switched.head, scenario })
   if (scenario === 'conflict') return `PR ${pr} (свой, конфликт): дерево на ${context.headRef}${stash ? `, stash «${stash}»` : ''}.`
   const next = handOff($, pr, handoff, scenario)
@@ -824,19 +804,26 @@ async function dropReviewWorktree($: EngineInterface): Promise<string | undefine
   const result = await removeWorktrees(fromMain, [here], { confirmed: false, isActive: isActive($) })
   if (result.removed.length) return `worktree ${here} удалён — ревью закончено, вкладку можно закрыть; команды в ней больше не работают`
   const reason = result.skipped[0]?.reason
-  return reason && reason !== 'не worktree ревью' ? `worktree ${here} оставлен (${reason}) — уберёт /pr cleanup` : undefined
+  return reason && reason !== 'не worktree ревью' ? `worktree ${here} оставлен (${reason}) — уберётся при следующем /pr` : undefined
 }
 
-async function dropReviewBranch($: EngineInterface, headRef: string | undefined): Promise<string | undefined> {
+async function restoreTree($: EngineInterface, { headRef, returnTo, stash, stashSha }: RunReturn): Promise<string | undefined> {
   const run = runner($)
   if (!(await inMainTree(run))) return undefined
   const current = (await gitText(run, ['branch', '--show-current'])).trim()
-  if (current === 'main' || (current !== '' && current !== headRef)) return undefined
-  const problem = await switchToBase(run)
-  if (problem) return `дерево оставлено на ${current || 'коммите PR'} (${problem}) — уберёт /pr cleanup`
-  if (!current) return 'дерево переключено на main'
-  const { deleted, skipped } = await deleteBranches(run, [current])
-  return deleted.length ? `дерево переключено на main, ветка ${current} удалена` : `дерево переключено на main; ветка ${current} оставлена (${skipped[0]?.reason ?? 'причина неизвестна'}) — уберёт /pr cleanup`
+  if (current !== '' && current !== headRef) return undefined
+  const back = await switchBack(run, returnTo === headRef ? undefined : returnTo)
+  if (back.problem) return `дерево оставлено на ${current || 'коммите PR'} (${back.problem})${stash ? ` — ваши изменения в stash «${stash}»` : ''}`
+  const removed = current && current !== back.on ? await deleteBranches(run, [current]) : { deleted: [], skipped: [] }
+  const branch = removed.deleted.length ? `, ветка ${current} удалена` : removed.skipped.length ? `, ветка ${current} оставлена (${removed.skipped[0].reason})` : ''
+  const applied = stashSha ? await stashAction(run, stashSha, 'apply') : undefined
+  const restored = !applied ? '' : applied.ok ? ', изменения из stash возвращены' : applied.error === STASH_GONE ? '' : `; stash «${stash}» ${applied.error}`
+  return `дерево на ${back.on}${branch}${restored}`
+}
+
+async function dropGuides($: EngineInterface, pr: number): Promise<void> {
+  const dir = `${await projectRoot($)}/.review-kit/guide`
+  await runner($)(['rm', '-f', `${dir}/pr-${pr}.md`, `${dir}/pr-${pr}-delta.md`])
 }
 
 async function publishReplies($: EngineInterface, pr: number): Promise<string> {
@@ -933,7 +920,7 @@ async function reviewTabs($: EngineInterface, prs: number[]): Promise<string> {
   }
   const { lines, here } = await openTabs($, prs, { orca, command: '/pr-review', title: () => 'review' })
   if (here.length) {
-    lines.push(`Вкладку Orca открыть не удалось — ревью PR ${here[0]} запускаю в текущем дереве${here.length > 1 ? `; остальные (${here.slice(1).join(', ')}) — потом: /pr-review <номер>` : ''}. Неиспользованные worktree уберёт /pr cleanup`)
+    lines.push(`Вкладку Orca открыть не удалось — ревью PR ${here[0]} запускаю в текущем дереве${here.length > 1 ? `; остальные (${here.slice(1).join(', ')}) — потом: /pr-review <номер>` : ''}. Неиспользованные worktree уберутся при следующем /pr`)
     submitLater($, `/pr-review ${here[0]}`, SUBMIT_ATTEMPTS)
   }
   return lines.join('\n')
@@ -1316,15 +1303,6 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'pr' }, async ($, e) => {
     const arg = String(e.args ?? '').trim()
-    if (arg === 'cleanup') {
-      const active = await activeRun($)
-      if (active !== undefined) return { text: `Идёт прогон PR ${active} — уборка после него (/pr-review stop или конец ревью).` }
-      try {
-        return { text: (await offerCleanup($, { minBranches: 0 })) || 'Убирать нечего.' }
-      } catch (error) {
-        return { text: `review-kit: ${(error as Error).message}` }
-      }
-    }
     if (arg === 'all') {
       try {
         return { text: await openAll($) }
@@ -1333,7 +1311,7 @@ export const register: Register = (on, options) => {
       }
     }
     const pr = arg === '' ? undefined : Number(arg)
-    if (pr !== undefined && (!Number.isInteger(pr) || pr < 1)) return { text: 'Использование: /pr [номер PR] | /pr all | /pr cleanup' }
+    if (pr !== undefined && (!Number.isInteger(pr) || pr < 1)) return { text: 'Использование: /pr [номер PR] | /pr all' }
 
     try {
       return { text: await routePr($, pr, 'submit') }
@@ -1426,11 +1404,15 @@ export const register: Register = (on, options) => {
     if ((await activeRun($)) !== pr) return { result: `not finished: нет активного прогона PR ${pr}` }
 
     const scenario = (await runFacts($))?.scenario
-    const { headRef } = await readJson<{ headRef?: string }>($, `${await runDir($, pr)}/context.json`, {})
+    const saved = await readJson<RunReturn>($, `${await runDir($, pr)}/context.json`, {})
     await finishRun($, pr, 'done')
-    if (!scenario || !READ_ONLY_SCENARIOS.includes(scenario)) return { result: 'finished' }
-    const dropped = await dropReviewWorktree($).catch(error => `worktree не удалён: ${(error as Error).message} — уберёт /pr cleanup`)
-      ?? await dropReviewBranch($, headRef).catch(error => `ветка не удалена: ${(error as Error).message} — уберёт /pr cleanup`)
+    await dropGuides($, pr).catch(() => undefined)
+    if (!scenario || !READ_ONLY_SCENARIOS.includes(scenario)) {
+      const kept = saved.stash ? `\nизменения с ветки ${saved.returnTo ?? '—'} — в stash «${saved.stash}»: вернуться на ветку и git stash pop` : ''
+      return { result: `finished${kept}` }
+    }
+    const dropped = await dropReviewWorktree($).catch(error => `worktree не удалён: ${(error as Error).message} — уберётся при следующем /pr`)
+      ?? await restoreTree($, saved).catch(error => `дерево не возвращено: ${(error as Error).message}${saved.stash ? ` — ваши изменения в stash «${saved.stash}»` : ''}`)
     return { result: dropped ? `finished\n${dropped}` : 'finished' }
   })
 

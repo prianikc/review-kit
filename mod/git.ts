@@ -209,7 +209,7 @@ export async function applySwitch(run: Run, plan: SwitchPlan): Promise<{ head: s
   return { head: (await gitText(run, ['rev-parse', 'HEAD'])).trim(), base: plan.base, detached: plan.detached, baseFallback: plan.baseFallback, ...(plan.baseNote ? { baseNote: plan.baseNote } : {}) }
 }
 
-export const STASH_PREFIX = 'review-kit:'
+export const STASH_GONE = 'stash уже не найден'
 const OPERATIONS = [['rebase-merge', 'rebase'], ['rebase-apply', 'rebase'], ['MERGE_HEAD', 'merge'], ['CHERRY_PICK_HEAD', 'cherry-pick'], ['REVERT_HEAD', 'revert']] as const
 const MARKER_LINE = '^(<<<<<<<|>>>>>>>)( |$)'
 const BASE_BRANCH = 'main'
@@ -326,20 +326,9 @@ export async function unpushed(run: Run, branch: string): Promise<string[]> {
   return (await gitText(run, ['log', '--oneline', range])).split('\n').filter(Boolean)
 }
 
-export async function reviewStashes(run: Run): Promise<Array<{ sha: string; message: string; branch: string }>> {
-  return (await gitText(run, ['stash', 'list', '--format=%H\t%gs'])).split('\n').filter(Boolean).flatMap(line => {
-    const [sha, subject = ''] = line.split('\t')
-    const at = subject.indexOf(': ')
-    const message = at >= 0 ? subject.slice(at + 2) : ''
-    if (!message.startsWith(STASH_PREFIX)) return []
-    const branch = subject.slice(0, at).replace(/^WIP on /, '').replace(/^On /, '').trim()
-    return [{ sha, message, branch: branch === '(no branch)' ? '' : branch }]
-  })
-}
-
 export async function stashAction(run: Run, sha: string, action: 'apply' | 'drop'): Promise<{ ok: boolean; conflict?: boolean; error?: string }> {
   const index = (await gitText(run, ['stash', 'list', '--format=%H'])).split('\n').indexOf(sha)
-  if (index < 0) return { ok: false, error: 'stash уже не найден' }
+  if (index < 0) return { ok: false, error: STASH_GONE }
   const result = await run(['git', 'stash', action === 'apply' ? 'pop' : 'drop', `stash@{${index}}`])
   if (result.exitCode === 0) return { ok: true }
   const unmerged = (await gitText(run, ['diff', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean)
@@ -354,27 +343,17 @@ async function busyBranches(run: Run): Promise<Set<string>> {
   return new Set((await gitText(run, ['worktree', 'list', '--porcelain'])).split('\n').filter(line => line.startsWith('branch refs/heads/')).map(line => line.slice('branch refs/heads/'.length)))
 }
 
-export async function branchCandidates(run: Run, { open, closed, me }: { open: PullRequest[]; closed: PullRequest[]; me: string }): Promise<Array<{ name: string; kind: 'pr' | 'no-pr'; reason: string }>> {
-  await run(['git', 'fetch', '-q', 'origin', '--prune'])
-  const busy = await busyBranches(run)
-  const names = (await gitText(run, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'])).split('\n').filter(Boolean)
-  const rows: Array<{ name: string; kind: 'pr' | 'no-pr'; reason: string }> = []
-  for (const name of names) {
-    if (name === BASE_BRANCH || busy.has(name) || !(await allOnOrigin(run, name))) continue
-    const opened = open.find(pull => pull.headRef === name)
-    const done = closed.find(pull => pull.headRef === name)
-    if (opened && opened.author.toLowerCase() === me.toLowerCase()) continue
-    if (opened) rows.push({ name, kind: 'pr', reason: `чужой открытый PR #${opened.number} — коммиты на origin` })
-    else if (done) rows.push({ name, kind: 'pr', reason: `PR #${done.number} ${done.merged ? 'влит' : 'закрыт'} — коммиты на origin` })
-    else rows.push({ name, kind: 'no-pr', reason: 'PR нет среди последних — коммиты на origin' })
-  }
-  return rows
+export async function switchBack(run: Run, target: string | undefined): Promise<{ problem?: string; on: string }> {
+  if ((await gitText(run, ['status', '--porcelain', '-uno', '--ignore-submodules=all'])).trim()) return { problem: 'в дереве изменены отслеживаемые файлы', on: '' }
+  const branch = target && (await hasRef(run, `refs/heads/${target}`))
+  const commit = !branch && target && /^[0-9a-f]{7,40}$/.test(target) && (await run(['git', 'cat-file', '-e', `${target}^{commit}`])).exitCode === 0
+  const [args, on] = branch ? [[target], target] : commit ? [['--detach', target], target.slice(0, 7)] : [[BASE_BRANCH], BASE_BRANCH]
+  const result = await run(['git', 'switch', '-q', ...args])
+  return result.exitCode === 0 ? { on } : { problem: `git switch не удался: ${result.stderr.trim()}`, on: '' }
 }
 
-export async function switchToBase(run: Run): Promise<string | undefined> {
-  if ((await gitText(run, ['status', '--porcelain', '-uno', '--ignore-submodules=all'])).trim()) return 'в дереве изменены отслеживаемые файлы'
-  const result = await run(['git', 'switch', '-q', BASE_BRANCH])
-  return result.exitCode === 0 ? undefined : `git switch не удался: ${result.stderr.trim()}`
+export function leftoverRuns(names: string[], { current, active }: { current?: number; active: Set<number> }): number[] {
+  return names.filter(name => /^\d+$/.test(name)).map(Number).filter(pr => pr !== current && !active.has(pr))
 }
 
 export async function deleteBranches(run: Run, names: string[]): Promise<{ deleted: string[]; skipped: Array<{ name: string; reason: string }> }> {
