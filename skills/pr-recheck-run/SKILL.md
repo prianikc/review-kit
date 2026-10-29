@@ -28,15 +28,15 @@ and stop. Ask nothing before the report, except the author's answers of step 4.
    «Принять», «Не принять», «Не принять и написать автору». Then rewrite that item in `statuses.json` with Write, keeping
    the others: «Принять» → `"class": "accepted"`, `reason` — the author's argument in a few words; «Не принять» →
    `"class": "open"`, `reason` — «ответ автора не принят» plus the user's note if any; «Не принять и написать автору» →
-   ask in text «Что написать автору?», end the turn, then `"class": "open"` with the user's words as `reason` — they go
-   into the review body. `review_publish` refuses while any `answered` is left.
+   ask in text «Что написать автору?», end the turn, then `"class": "open"`, `reason` — «ответ автора не принят», and
+   `"message"` — the user's words; `review_publish` posts them as a reply in that comment's thread. `review_publish` refuses while any `answered` is left.
 5. Report in Russian (the guide is not repeated): `Статус: <status>`; «Режим: дельта после моего ревью» (with `note` → «… — <note>») or «Режим: проверено всё — <note>»;
    «Прошлые замечания» — each `prior` item as `<path>:<line>` (or «общее») — закрыто / закрыто — принят ответ автора / не
    закрыто / частично / не проверено — reason; then «Подтверждённые», «Обсуждение PR», «Подтверждено, ниже порога», «Не подтверждено» and «Не проверялось» as in section 2 of review-kit:pr-review-run. Verdict:
    Blocked if any critical; Changes requested if any important finding, any `open`/`partial` earlier comment or any thread
    in `discussion.open` of `findings.json` that is not an earlier comment closed or accepted above; otherwise Approved.
-6. Publish: sections 3 and 4 of review-kit:pr-review-run; `review_publish` adds the statuses of `statuses.json` to the
-   review body itself and counts open or partial earlier comments as reasons to request changes — the user's own verdict
+6. Publish: sections 3 and 4 of review-kit:pr-review-run; the statuses stay in the report — the review body does not
+   repeat them; `review_publish` counts open or partial earlier comments as reasons to request changes — the user's own verdict
    («апрувим») goes in as `verdict` and overrides that. A refusal keeps the run open as section 4 says.
 7. `review_finish` once publishing is done or declined. Every stop of this skill ends with `review_finish`. Its `worktree …` line is handled as in section 4
    of review-kit:pr-review-run.

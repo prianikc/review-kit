@@ -88,6 +88,7 @@ test('priorComments: мои комментарии последнего ревь
   const result = priorComments(data({ reviews, threads }))
   assert.equal(result?.review.id, 'r2')
   assert.deepEqual(result?.prior.map(p => [p.id, p.path, p.line]), [['r2/c5', 'a.ts', 3], ['review/r2', null, null]])
+  assert.deepEqual(result?.prior.map(p => p.threadId), [threads[0].id, null])
   assert.equal(priorComments(data()), null)
 })
 

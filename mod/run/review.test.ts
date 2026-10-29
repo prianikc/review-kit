@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, statusesBlock, undecidedAnswers, verdictName } from './review.ts'
+import { buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, undecidedAnswers, verdictName } from './review.ts'
+import { MARKER } from '../status.ts'
 import type { Finding } from './findings.ts'
 import type { IntakeItem } from '../status.ts'
 
@@ -38,9 +39,9 @@ test('parseCovered: строки новых хунков по файлам', () 
   assert.deepEqual([...parseCovered(diff)], [['a.ts', new Set([3, 4])]])
 })
 
-test('buildDraft: inline в diff, вне diff — в тело; request changes', () => {
-  const { draft } = buildDraft({ selected: [f('A-1', 'important', 3), f('A-2', 'minor', 9)], texts: { summary: 'Итог', comments: { 'A-1': 'один', 'A-2': 'два' } }, verdict: 'Changes requested', approve: false, covered: COVERED, capabilities: CAPS })
-  assert.deepEqual(draft, { verdict: 'request-changes', body: 'Итог\n\nВне diff:\n- a.ts:9 — два', comments: [{ path: 'a.ts', line: 3, body: 'один' }] })
+test('buildDraft: inline в diff, вне diff — в тело; request changes без лишнего текста', () => {
+  const { draft } = buildDraft({ selected: [f('A-1', 'important', 3), f('A-2', 'minor', 9)], texts: { comments: { 'A-1': 'один', 'A-2': 'два' } }, verdict: 'Changes requested', approve: false, covered: COVERED, capabilities: CAPS })
+  assert.deepEqual(draft, { verdict: 'request-changes', body: 'Вне diff:\n- a.ts:9 — два', comments: [{ path: 'a.ts', line: 3, body: 'один' }] })
 })
 
 test('buildDraft: approve только при одобряемом вердикте; без approve — комментарий', () => {
@@ -54,8 +55,17 @@ test('buildDraft: одобрение без находок — без тела �
   assert.equal(buildDraft({ selected: [f('A-1', 'minor')], texts: { summary: 'Итог', comments: { 'A-1': 'x' } }, verdict: 'Approved with comments', approve: true, covered: COVERED, capabilities: CAPS }).draft.body, 'Итог')
 })
 
-test('buildDraft: пустое тело request changes — текст по умолчанию', () => {
-  assert.equal(buildDraft({ selected: [f('A-1', 'critical')], texts: { comments: { 'A-1': 'x' } }, verdict: 'Blocked', approve: false, covered: COVERED, capabilities: CAPS }).draft.body, 'Нужны правки — см. комментарии.')
+test('buildDraft: request changes с комментариями — тело пустое; без комментариев — «Нужны правки.»', () => {
+  assert.equal(buildDraft({ selected: [f('A-1', 'critical')], texts: { comments: { 'A-1': 'x' } }, verdict: 'Blocked', approve: false, covered: COVERED, capabilities: CAPS }).draft.body, '')
+  assert.equal(buildDraft({ selected: [], texts: { comments: {} }, verdict: 'Changes requested', approve: false, covered: COVERED, capabilities: CAPS }).draft.body, 'Нужны правки.')
+})
+
+test('buildReplies: пункты прошлых замечаний — тред или цитата', () => {
+  const prior = [{ id: 'r1/c1', threadId: 'r1:a.ts:3', quote: 'null тут' }, { id: 'review/r1', threadId: null, quote: 'Общее\nвторая' }]
+  assert.deepEqual(buildReplies(prior, { 'r1/c1': 'Не принято', 'review/r1': 'Ответ' }), [
+    { threadId: 'r1:a.ts:3', body: `Не принято\n\n${MARKER}` },
+    { quote: 'Общее', body: `Ответ\n\n${MARKER}` },
+  ])
 })
 
 test('buildDraft: система без request changes и без inline — комментарий, всё в теле, заметки', () => {
@@ -68,17 +78,10 @@ test('buildDraft: нет текста для находки — ошибка', (
   assert.throws(() => buildDraft({ selected: [f('A-1', 'minor')], texts: { comments: {} }, verdict: 'Approved with comments', approve: false, covered: COVERED, capabilities: CAPS }), /нет текста для: A-1/)
 })
 
-test('statusesBlock: счёт и строки', () => {
-  const text = statusesBlock([{ id: 'r/1', class: 'closed' }, { id: 'r/2', class: 'open', reason: 'нет' }, { id: 'review/r', class: 'unknown' }], [{ id: 'r/1', path: 'a.ts', line: 3 }, { id: 'r/2', path: 'b.ts', line: 1 }, { id: 'review/r', path: null, line: null }])
-  assert.equal(text, 'Прошлые замечания: закрыто 1, не закрыто 1, частично 0.\n- b.ts:1 — не закрыто: нет\n- общее — не проверено: ')
-})
-
-test('ответ автора: answered без решения — нерешён и требует правок; принятый — закрыт со своей строкой', () => {
+test('ответ автора: answered без решения — нерешён и требует правок; принятый — закрыт', () => {
   assert.equal(verdictName([], [{ class: 'answered' }]), 'Changes requested')
   assert.equal(verdictName([], [{ class: 'accepted' }]), 'Approved')
   assert.deepEqual(undecidedAnswers([{ id: 'r/1', class: 'answered' }, { id: 'r/2', class: 'accepted' }]), ['r/1'])
-  const text = statusesBlock([{ id: 'r/1', class: 'accepted', reason: 'проверка выше' }, { id: 'r/2', class: 'closed' }], [{ id: 'r/1', path: 'a.ts', line: 3 }, { id: 'r/2', path: 'b.ts', line: 1 }])
-  assert.equal(text, 'Прошлые замечания: закрыто 2, не закрыто 0, частично 0.\n- a.ts:3 — закрыто — принят ответ автора: проверка выше')
 })
 
 test('buildReplies: тред/общий, цитата — первая строка до 200, маркер, пустые пропускаются, неизвестный id — ошибка', () => {
