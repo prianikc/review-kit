@@ -58,10 +58,11 @@ function parseThreadKey(key: string): { reviewId: string; path: string; line: nu
 }
 
 function toThreads(comments: RawReviewComment[]): Thread[] {
-  const groups = comments.reduce((map, raw) => map.set(threadKey(raw), [...(map.get(threadKey(raw)) ?? []), raw]), new Map<string, RawReviewComment[]>())
-  return [...groups].map(([id, group]) => {
+  const place = (raw: RawReviewComment) => `${raw.path}:${raw.position}`
+  const groups = comments.reduce((map, raw) => map.set(place(raw), [...(map.get(place(raw)) ?? []), raw]), new Map<string, RawReviewComment[]>())
+  return [...groups.values()].map(group => {
     const sorted = [...group].sort((a, b) => a.created_at.localeCompare(b.created_at))
-    return { id, path: sorted[0].path, line: sorted[0].position, commitSha: sorted[0].commit_id, comments: sorted.map(toCodeComment), resolved: sorted.some(raw => Boolean(raw.resolver)) }
+    return { id: threadKey(sorted[0]), path: sorted[0].path, line: sorted[0].position, commitSha: sorted[0].commit_id, comments: sorted.map(toCodeComment), resolved: sorted.some(raw => Boolean(raw.resolver)) }
   })
 }
 

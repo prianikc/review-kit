@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ACTIONABLE, contextOf, rowLine, placeAll, prListText, pullRows, splitHere, statusOf, intakeItems, loadPr, MARKER, priorComments, scenarioOf, type ListRow, type PrData } from './status.ts'
+import { ACTIONABLE, commentIds, contextOf, driftOf, rowLine, placeAll, prListText, pullRows, splitHere, statusOf, intakeItems, loadPr, MARKER, priorComments, scenarioOf, type ListRow, type PrData } from './status.ts'
 import { fakeProvider } from './forge/fake.ts'
 import type { Comment, PullRequest, Review, Thread } from './forge/types.ts'
 
@@ -237,4 +237,28 @@ test('чужой PR: моё последнее ревью — действующ
   assert.equal(scenarioOf(approved), 'wait-author')
   const dismissed = data({ reviews: [{ ...review('r2', 'alice', 'approved', 'h1', '2026-10-02T10:00:00Z'), dismissed: true }] })
   assert.equal(scenarioOf(dismissed), 'recheck')
+})
+
+test('driftOf: та же голова и те же комментарии — расхождения нет', () => {
+  const d = data({ threads: [thread([comment('c1', 'alice', 'тут', '2026-10-01T10:00:00Z')])] })
+  assert.equal(driftOf({ headSha: 'h2', commentIds: commentIds(d) }, d, ['alice']), undefined)
+})
+
+test('driftOf: новая голова — короткие sha было/стало', () => {
+  const d = data({ pull: pull({ headSha: '842c6f0aaaa' }) })
+  assert.equal(driftOf({ headSha: 'd70145dbbbb', commentIds: [] }, d, ['alice']), 'голова была d70145d, стала 842c6f0')
+})
+
+test('driftOf: новый комментарий автора — расхождение; мой и бота — нет; снимок без комментариев — только голова', () => {
+  const old = comment('c1', 'alice', 'тут', '2026-10-01T10:00:00Z')
+  const fresh = (author: string) => data({ threads: [thread([old, comment('c2', author, 'поправил', '2026-10-01T11:00:00Z')])] })
+  assert.equal(driftOf({ headSha: 'h2', commentIds: ['c1'] }, fresh('bob'), ['alice', 'ci-bot']), 'новые комментарии — bob (1)')
+  assert.equal(driftOf({ headSha: 'h2', commentIds: ['c1'] }, fresh('Alice'), ['alice', 'ci-bot']), undefined)
+  assert.equal(driftOf({ headSha: 'h2', commentIds: ['c1'] }, fresh('ci-bot'), ['alice', 'ci-bot']), undefined)
+  assert.equal(driftOf({ headSha: 'h2', commentIds: null }, fresh('bob'), ['alice']), undefined)
+})
+
+test('driftOf: голова и общий комментарий вместе — одной строкой', () => {
+  const d = data({ pull: pull({ headSha: 'bbbbbbbbb' }), general: [{ id: 'g1', author: 'bob', body: 'готово', createdAt: '2026-10-01T11:00:00Z' }, { id: 'g2', author: 'bob', body: 'и тут', createdAt: '2026-10-01T12:00:00Z' }] })
+  assert.equal(driftOf({ headSha: 'aaaaaaaaa', commentIds: [] }, d, ['alice']), 'голова была aaaaaaa, стала bbbbbbb; новые комментарии — bob (2)')
 })

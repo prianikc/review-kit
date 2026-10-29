@@ -20,6 +20,10 @@ No `context.json` → tell the user to run `/pr-review <N>` and stop.
    nothing else until the workflow's completion notification arrives. The notification arrived before the guide was
    done → finish the guide first.
 4. `review_collect` with `pr`, `id: "funnel"`, `outputFile` = the notification's `<output-file>`.
+   An answer starting with «PR изменился во время прогона:» → show that line, no report, no verdict, no publishing;
+   AskUserQuestion «PR изменился во время прогона — что делаем?» — «Перезапустить» (`review_finish`, then `review_start`
+   with `pr` and follow its answer), «Остановить» (`review_finish`, stop). An answer starting with «свежесть PR не
+   проверена:» → show that line first in the report and go on as usual.
 5. The workflow failed, left no output file, or `review_collect` answered `review-kit: …` → report «Ревью агентами не
    состоялось — не проверено» with that line, never a verdict; `review_finish`, stop. Do not review the changes yourself, give no verdict and offer no publishing — unless the user asks for it in a new message.
 
@@ -76,7 +80,10 @@ rule quote, no level, no greeting or thanks.
    no body and no comments anywhere.
 3. `review_publish` with `pr`, `ids`, and `verdict` (`approve` | `request-changes`) whenever the user named one — it
    overrides the computed verdict. Without it the tool picks the verdict itself: critical or important findings, an
-   open thread of the PR, or in a recheck an open or partial earlier comment → request changes, otherwise approve. It shows the review and asks the user
+   open thread of the PR, or in a recheck an open or partial earlier comment → request changes, otherwise approve —
+   but request changes only when something goes to the author (chosen findings or replies); with nothing chosen it
+   approves. An explicit request-changes with nothing chosen is refused (`not published: запрос изменений без
+   комментариев …`) — ask the user to pick findings or approve. It shows the review and asks the user
    itself → section 4. An approval without chosen findings is published without any text, whatever `texts.json` says.
    Never tell the user what verdict went out before the tool's answer names it.
 
@@ -104,7 +111,8 @@ user to check the PR before anything else; never publish again. Then `review_fin
 → the run stays open: say which verdict the dialog offered, then AskUserQuestion «Что делаем с ревью PR <N>?» —
 «Одобрить» (`verdict: "approve"`), «Запросить изменения» (`verdict: "request-changes"`), «Изменить выбор находок» (back to
 «Directly» step 1), «Не публиковать». A verdict option → `review_publish` again with the same `ids` and that `verdict`, then
-this section again. «Не публиковать» → `review_finish`. Any other `not published: …` → show the reason, then `review_finish`.
+this section again. «Не публиковать» → `review_finish`. `not published: PR обновился после снимка: …` → show it and ask the same question as for «PR изменился во время
+прогона» in section 1. Any other `not published: …` → show the reason, then `review_finish`.
 
 The user does not want to publish → `review_finish`. Every stop of this skill ends with `review_finish`. Never call curl
 or the hosting API; publishing goes only through `review_publish`.

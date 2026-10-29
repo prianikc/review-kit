@@ -1,6 +1,7 @@
 import type { Comment, ForgeProvider, PullRequest, Review, Thread } from './forge/types.ts'
 
 export const MARKER = '<!-- review-kit -->'
+const SHORT_SHA = 7
 export const ACTIONABLE: readonly Scenario[] = ['feedback', 'conflict', 'review', 'recheck']
 
 export type Scenario = 'closed' | 'conflict' | 'feedback' | 'none-own' | 'review' | 'recheck' | 'wait-author'
@@ -96,6 +97,28 @@ export async function loadPr(provider: ForgeProvider, number: number, pull?: Pul
   const [loaded, me, reviews, discussion] = await Promise.all([pull ?? provider.getPull(number), provider.currentUser(), provider.listReviews(number), provider.listThreads(number)])
   const headAt = same(loaded.author, me) ? await provider.commitDate(loaded.headSha).catch(() => '') : undefined
   return { pull: loaded, me, reviews, threads: discussion.threads, general: discussion.general, ...(headAt ? { headAt } : {}) }
+}
+
+export interface PrSnapshot {
+  headSha: string
+  commentIds: string[] | null
+}
+
+export function commentIds(data: PrData): string[] {
+  return [...data.threads.flatMap(thread => thread.comments), ...data.general].map(comment => comment.id)
+}
+
+export function driftOf(snapshot: PrSnapshot, data: PrData, ignore: string[]): string | undefined {
+  const seen = new Set(snapshot.commentIds ?? [])
+  const fresh = snapshot.commentIds === null ? [] : [...data.threads.flatMap(thread => thread.comments), ...data.general]
+    .filter(comment => !seen.has(comment.id) && !ignore.some(login => same(comment.author, login)))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const authors = fresh.reduce((counts, comment) => counts.set(comment.author, (counts.get(comment.author) ?? 0) + 1), new Map<string, number>())
+  const parts = [
+    ...(data.pull.headSha !== snapshot.headSha ? [`голова была ${snapshot.headSha.slice(0, SHORT_SHA)}, стала ${data.pull.headSha.slice(0, SHORT_SHA)}`] : []),
+    ...(authors.size ? [`новые комментарии — ${[...authors].map(([author, count]) => `${author} (${count})`).join(', ')}`] : []),
+  ]
+  return parts.length ? parts.join('; ') : undefined
 }
 
 export function intakeItems(data: PrData): IntakeItem[] {
