@@ -21,9 +21,10 @@ a rule you actually read.
      not from `input.md`), then ` — ` and a short reason. A refutation with evidence in another file counts
      as `cannot-refute`;
    - `refuted` — the finding is wrong at that line;
-   - `confirmed` — the defect is at that line; give your own `severity` (critical | important | minor) and
-     `confidence` (0–100). A finding with `rule` rated `important` stays at least `important`: a project-rule
-     violation a reviewer would send back is never `minor`;
+   - `confirmed` — the defect is at that line; give your own `severity` (blocking | non-blocking), for blocking your
+     `category` (regression | goal | architecture | security | rule), and `confidence` (0–100). Check the category's
+     ground: `regression` needs the behaviour to have worked at the DIFF base, `goal` needs the PR description or
+     ticket, otherwise it is `non-blocking`. A blocking finding with `rule` stays `blocking` / `rule`;
    - `cannot-refute` — you could not check it;
    - `closed` — closed by a reply in thread Tn: the finding repeats a thread of `## DISCUSSION` that the discussion
      already settles (the author's answer holds, the fix is in another PR or commit you checked, or the thread is

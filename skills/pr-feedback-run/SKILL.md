@@ -21,18 +21,19 @@ Read `.review-kit/run/<N>/context.json` (`status`, `plannotator`) and `.review-k
    and answers the summary: the same numbers as the overview, each with the verdict and its reason.
 5. Any step failed → «Разбор агентом не состоялся» with the line, then triage yourself: for each item read the quoted
    place at the PR head and write `.review-kit/run/<N>/triage.json` = `{"items": [{"id", "class", "reason", "fixed"?}]}` with
-   the classes of `${CLAUDE_PLUGIN_ROOT}/agents/triage.md` (valid / invalid / question / out-of-scope; a `stale` item already
+   the classes of `${CLAUDE_PLUGIN_ROOT}/agents/triage.md` (valid / todo / invalid / question / out-of-scope; a `stale` item already
    changed as asked is `valid` with `"fixed": true` and a reason saying where). Write the summary yourself in the form of
    section 2.
 
 ## 2. Summary
 
-`Статус: <status>`, then the summary of `review_collect` exactly as given: «Итог разбора PR <N>: исправим A, уже
+`Статус: <status>`, then the summary of `review_collect` exactly as given: «Итог разбора PR <N>: исправим A, в TODO T, уже
 исправлено B, не согласны C, вопросы D, вне задачи E.» and every item, numbered as in the overview —
-`<n>. <place> — <author>: <first line>` and `→ <согласны — исправим | уже исправлено | не согласны — отклоняем | вопрос —
+`<n>. <place> — <author>: <first line>` and `→ <согласны — исправим | не блокирует — в TODO | уже исправлено | не согласны — отклоняем | вопрос —
 нужен ответ | вне задачи>: <reason>`. No hosting ids anywhere the user reads.
 
 AskUserQuestion «Что делаем?» — «Чиним (ответы на остальное — в конце)», «Только ответить».
 - «Чиним» → review-kit:pr-fix-run from its step 0 (it checks Plannotator and superpowers first); the run stays open.
-  Every `valid` item has `fixed` → nothing to fix: go straight to «Replies» of review-kit:pr-fix-run.
+  Every `valid` item has `fixed` and there is no `todo` → nothing to change: go straight to «Replies» of
+  review-kit:pr-fix-run.
 - «Только ответить» → «Replies» of review-kit:pr-fix-run, then `review_finish`.

@@ -26,9 +26,8 @@ your manifest, and the PR number.
 5. `file` is the path from the repository root as in the DIFF. `line` is the line number in the changed file
    itself at the PR head: open that file with Read and take the number from that Read. The numbers Read shows
    for `input.md` are positions inside `input.md` — never use them as `line`.
-6. Severity: `important` — a rule violation a reviewer would send back; `minor` — a rule about style or
-   naming; `critical` only when the violation also breaks the product, loses data, or is exploitable.
-   `confidence` is your probability, 0–100, that the finding is real and correct.
+6. Severity: every violation of a project rule is `blocking` with `category: "rule"` — the team blocks a merge on
+   any rule the project states. `confidence` is your probability, 0–100, that the finding is real and correct.
 7. Before reporting, read `## DISCUSSION`. Do not report a finding that duplicates an existing
    thread unless the author's latest reply leaves it unresolved; in that case report it as a
    follow-up and quote the reply, saying why it does not close the issue. If the author points

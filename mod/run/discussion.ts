@@ -2,6 +2,7 @@ import type { Comment, Review, Thread } from '../forge/types.ts'
 import { live, MARKER, type PrData } from '../status.ts'
 
 export const NO_DISCUSSION = 'обсуждения нет'
+export const NON_BLOCKING_PREFIX = 'TODO: '
 export const MAX_DISCUSSION_CHARS = 40_000
 const BODY_LIMIT = 4_000
 const STATES: Record<Review['state'], string> = { approved: 'APPROVED', changes: 'REQUEST_CHANGES', comment: 'COMMENT', pending: 'PENDING' }
@@ -14,6 +15,7 @@ export interface DiscussionThread {
   status: 'open' | 'resolved'
   last: LastWord
   lastAuthorReply?: string
+  nonBlocking: boolean
   commentIds: string[]
 }
 
@@ -62,7 +64,7 @@ export function discussionOf(data: PrData, { bots = [], limit = MAX_DISCUSSION_C
     const reply = thread.comments.slice(1).filter(comment => same(comment.author, author) && !mine(comment)).at(-1)
     return {
       id: `T${index + 1}`, place: `${thread.path ?? ''}:${thread.line ?? ''}`, status: thread.resolved ? 'resolved' : 'open', last: lastWord(last),
-      ...(reply ? { lastAuthorReply: reply.body.trim() } : {}), commentIds: thread.comments.map(comment => comment.id),
+      ...(reply ? { lastAuthorReply: reply.body.trim() } : {}), nonBlocking: thread.comments[0].body.replace(MARKER, '').trim().startsWith(NON_BLOCKING_PREFIX), commentIds: thread.comments.map(comment => comment.id),
     }
   })
   const threadBlock = (thread: Thread, info: DiscussionThread) => [

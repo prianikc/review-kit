@@ -9,17 +9,17 @@ const base = {
   changed: ['src/a.ts'], lineCounts: new Map([['src/a.ts', 10]]), rules: new Map([['CLAUDE.md', `# Правила\n- ${RULE}\n`]]),
   skipped: new Map<string, string>(), table: TABLE, manifestNotes: [], gateRows: [{ role: 'correctness', event: 'passed' }],
 }
-const finding = (over: Partial<Finding> = {}): Finding => ({ id: 'A-1', role: 'correctness', file: 'src/a.ts', line: 3, severity: 'important', confidence: 90, problem: 'p', failureScenario: 's', ...over })
+const finding = (over: Partial<Finding> = {}): Finding => ({ id: 'A-1', role: 'correctness', file: 'src/a.ts', line: 3, severity: 'blocking', category: 'regression', confidence: 90, problem: 'p', failureScenario: 's', ...over })
 const raw = (findings: Finding[], verdicts: unknown[], over = {}) => ({ findings, verdicts, refuter: 'ok', failed: [], roles: ['correctness', 'quality'], notChecked: [], ...over })
 
-test('подтверждённая important ≥75 — в отчёт; строка из evidence C', () => {
-  const result = collectFindings({ ...base, raw: raw([finding()], [{ id: 'A-1', verdict: 'confirmed', evidence: 'src/a.ts:5 — так', severity: 'important', confidence: 80 }]) })
+test('подтверждённая блокирующая ≥75 — в отчёт; строка из evidence C', () => {
+  const result = collectFindings({ ...base, raw: raw([finding()], [{ id: 'A-1', verdict: 'confirmed', evidence: 'src/a.ts:5 — так', severity: 'blocking', confidence: 80 }]) })
   assert.deepEqual(result.findings.map(f => [f.id, f.line, f.verdict]), [['A-1', 5, 'confirmed']])
 })
 
-test('опровержение с доказательством в чужом файле → cannot-refute (critical — в отчёт с меткой)', () => {
-  const result = collectFindings({ ...base, raw: raw([finding({ severity: 'critical' })], [{ id: 'A-1', verdict: 'refuted', evidence: 'src/other.ts:2 — не так' }]) })
-  assert.equal(result.findings[0].mark, 'не проверено')
+test('опровержение с доказательством в чужом файле → cannot-refute (ниже порога с меткой)', () => {
+  const result = collectFindings({ ...base, raw: raw([finding()], [{ id: 'A-1', verdict: 'refuted', evidence: 'src/other.ts:2 — не так' }]) })
+  assert.equal(result.belowBar[0].mark, 'C не проверил')
 })
 
 test('опровергнутая находка выпадает с причиной', () => {
@@ -30,7 +30,7 @@ test('опровергнутая находка выпадает с причин
 test('цитата правила: найдена после нормализации; не из RULES — rule-file-not-provided; нет сценария и цитата неверна — выпадает', () => {
   const quoted = finding({ id: 'B-1', role: 'quality', failureScenario: undefined, rule: { file: './CLAUDE.md', quote: 'Все  экспортируемые функции должны иметь *комментарий* над объявлением' } })
   const foreign = finding({ id: 'B-2', role: 'quality', failureScenario: undefined, rule: { file: '.claude/rules/x.md', quote: RULE } })
-  const confirm = (id: string) => ({ id, verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'important', confidence: 90 })
+  const confirm = (id: string) => ({ id, verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'blocking', confidence: 90 })
   const result = collectFindings({ ...base, raw: raw([quoted, foreign], [confirm('B-1'), confirm('B-2')]) })
   assert.deepEqual(result.findings.map(f => f.id), ['B-1'])
   assert.deepEqual(result.dropped, [{ id: 'B-2', reason: 'rule-file-not-provided' }])
@@ -49,16 +49,19 @@ test('файл не в diff и строка за концом файла — в�
 
 test('дубли сливаются в сильнейшую, строки объединяются', () => {
   const result = collectFindings({ ...base, raw: raw([finding({ id: 'A-1', line: 3 }), finding({ id: 'B-1', role: 'quality', line: 4 })], [
-    { id: 'A-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'critical', confidence: 90 },
-    { id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:4 — да', severity: 'important', confidence: 90, duplicateOf: 'A-1' },
+    { id: 'A-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'blocking', confidence: 90 },
+    { id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:4 — да', severity: 'non-blocking', confidence: 90, duplicateOf: 'A-1' },
   ]) })
   assert.deepEqual(result.findings.map(f => [f.id, f.lines]), [['A-1', [3, 4]]])
   assert.deepEqual(result.dropped, [{ id: 'B-1', reason: 'duplicate-of:A-1' }])
 })
 
-test('minSeverity important: minor уходит в dropped', () => {
-  const result = collectFindings({ ...base, minSeverity: 'important', raw: raw([finding({ severity: 'minor' })], [{ id: 'A-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'minor', confidence: 95 }]) })
-  assert.deepEqual([result.findings.length, result.dropped], [0, [{ id: 'A-1', reason: 'below-important' }]])
+test('delta перепроверки (minSeverity blocking): неблокирующая уходит в dropped, блокирующая остаётся', () => {
+  const result = collectFindings({ ...base, minSeverity: 'blocking', raw: raw([finding({ id: 'A-1', category: 'security' }), finding({ id: 'A-2', line: 6, severity: 'non-blocking' })], [
+    { id: 'A-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — да', confidence: 95 },
+    { id: 'A-2', verdict: 'confirmed', evidence: 'src/a.ts:6 — да', severity: 'non-blocking', confidence: 95 },
+  ]) })
+  assert.deepEqual([result.findings.map(f => f.id), result.dropped], [['A-1'], [{ id: 'A-2', reason: 'below-blocking' }]])
 })
 
 test('заметки: пропущенные файлы, манифест, гейт, упавшие агенты', () => {
@@ -94,31 +97,48 @@ test('«Не проверялось»: удалённый в PR файл не п
   assert.deepEqual(result.notChecked, ['src/a.ts — не смог проверить вызовы', 'big.txt — не приложен: больше 60000 символов'])
 })
 
-test('нарушение правила проекта: C не опускает important ниже important, поднять может', () => {
-  const ruled = finding({ id: 'B-1', role: 'quality', failureScenario: undefined, rule: { file: 'CLAUDE.md', quote: RULE } })
-  const lowered = collectFindings({ ...base, raw: raw([ruled], [{ id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — так', severity: 'minor', confidence: 90 }]) })
-  assert.equal(lowered.findings[0].severity, 'important')
-  const raised = collectFindings({ ...base, raw: raw([ruled], [{ id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — так', severity: 'critical', confidence: 90 }]) })
-  assert.equal(raised.findings[0].severity, 'critical')
-  const styleMinor = collectFindings({ ...base, raw: raw([{ ...ruled, severity: 'minor' }], [{ id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — так', severity: 'minor', confidence: 90 }]) })
-  assert.equal(styleMinor.belowBar.concat(styleMinor.findings)[0]?.severity ?? 'minor', 'minor')
+test('нарушение правила проекта: C не опускает блокирующую с правилом — она остаётся blocking/rule', () => {
+  const ruled = finding({ id: 'B-1', role: 'quality', category: 'rule', failureScenario: undefined, rule: { file: 'CLAUDE.md', quote: RULE } })
+  const lowered = collectFindings({ ...base, raw: raw([ruled], [{ id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — так', severity: 'non-blocking', confidence: 90 }]) })
+  assert.deepEqual([lowered.findings[0].severity, lowered.findings[0].category], ['blocking', 'rule'])
+})
+
+test('блокирующая без категории — в «не подтверждено» с причиной no-category', () => {
+  const result = collectFindings({ ...base, raw: raw([finding({ category: undefined })], [{ id: 'A-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — да', confidence: 90 }]) })
+  assert.equal(result.findings.length, 0)
+  assert.deepEqual(result.dropped, [{ id: 'A-1', reason: 'no-category' }])
+})
+
+test('категория rule без подтверждённой цитаты — rule-category-without-rule; у неблокирующей категория снимается', () => {
+  const badQuote = finding({ category: 'rule', rule: { file: 'CLAUDE.md', quote: 'совсем другая цитата из правил проекта которой нет' } })
+  const ok = { id: 'A-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — да', confidence: 90 }
+  assert.deepEqual(collectFindings({ ...base, raw: raw([badQuote], [ok]) }).dropped, [{ id: 'A-1', reason: 'rule-category-without-rule' }])
+  const plain = collectFindings({ ...base, raw: raw([finding({ severity: 'non-blocking', category: 'goal' })], [{ ...ok, severity: 'non-blocking' }]) })
+  assert.equal(plain.findings[0].category, undefined)
+})
+
+test('C может сменить категорию блокирующей; неизвестная категория C не принимается', () => {
+  const changed = collectFindings({ ...base, raw: raw([finding()], [{ id: 'A-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'blocking', category: 'goal', confidence: 90 }]) })
+  assert.equal(changed.findings[0].category, 'goal')
+  const unknown = collectFindings({ ...base, raw: raw([finding()], [{ id: 'A-1', verdict: 'confirmed', evidence: 'src/a.ts:3 — да', category: 'style', confidence: 90 }]) })
+  assert.equal(unknown.findings[0].category, 'regression')
 })
 
 test('unconfirmed: опровергнутые и отброшенные — с файлом, строкой и проблемой; дубли — нет; пул ревью — все три списка', () => {
   const result = collectFindings({ ...base, raw: raw([
-    finding({ id: 'A-1' }), finding({ id: 'A-2', file: 'x.ts' }), finding({ id: 'B-1', role: 'quality', line: 4, severity: 'minor', confidence: 40 }),
+    finding({ id: 'A-1' }), finding({ id: 'A-2', file: 'x.ts' }), finding({ id: 'B-1', role: 'quality', line: 4, severity: 'non-blocking', confidence: 40 }),
     finding({ id: 'B-2', role: 'quality', line: 5 }), finding({ id: 'B-3', role: 'quality', line: 3 }),
   ], [
     { id: 'A-1', verdict: 'refuted', evidence: 'src/a.ts:3 — [так] и задумано' },
-    { id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:4 — да', severity: 'minor', confidence: 40 },
-    { id: 'B-2', verdict: 'confirmed', evidence: 'src/a.ts:5 — да', severity: 'important', confidence: 90 },
-    { id: 'B-3', verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'important', confidence: 80, duplicateOf: 'B-2' },
+    { id: 'B-1', verdict: 'confirmed', evidence: 'src/a.ts:4 — да', severity: 'non-blocking', confidence: 40 },
+    { id: 'B-2', verdict: 'confirmed', evidence: 'src/a.ts:5 — да', severity: 'blocking', confidence: 90 },
+    { id: 'B-3', verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'blocking', confidence: 80, duplicateOf: 'B-2' },
   ]) })
   assert.deepEqual(result.unconfirmed.map(f => [f.id, f.file, f.line, f.problem, f.mark]), [
-    ['A-1', 'src/a.ts', 3, 'p', 'опровергнуто'], ['A-2', 'x.ts', 3, 'p', 'отброшено: file-not-in-diff'], ['B-1', 'src/a.ts', 4, 'p', 'отброшено: below-threshold:confirmed:minor:40'],
+    ['A-1', 'src/a.ts', 3, 'p', 'опровергнуто'], ['A-2', 'x.ts', 3, 'p', 'отброшено: file-not-in-diff'], ['B-1', 'src/a.ts', 4, 'p', 'отброшено: below-threshold:confirmed:non-blocking:40'],
   ])
   assert.equal(result.unconfirmed[0].evidence, 'src/a.ts:3 — [так] и задумано')
-  assert.deepEqual(reviewPool(result).map(f => [f.id, f.mark ?? '']), [['B-2', ''], ['A-1', 'опровергнуто'], ['A-2', 'отброшено: file-not-in-diff'], ['B-1', 'отброшено: below-threshold:confirmed:minor:40']])
+  assert.deepEqual(reviewPool(result).map(f => [f.id, f.mark ?? '']), [['B-2', ''], ['A-1', 'опровергнуто'], ['A-2', 'отброшено: file-not-in-diff'], ['B-1', 'отброшено: below-threshold:confirmed:non-blocking:40']])
 })
 
 test('finishTriage: в перепроверке класс answered принимается, accepted от агента — нет', () => {
@@ -130,7 +150,7 @@ const THREADS = [
   { id: 'T1', place: 'src/a.ts:3', status: 'open' as const, last: 'мы' as const, commentIds: ['c1'] },
   { id: 'T2', place: 'src/a.ts:8', status: 'open' as const, last: 'автор' as const, lastAuthorReply: 'вынесено в #205', commentIds: ['c2', 'c3'] },
 ]
-const confirmed = (id: string) => ({ id, verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'important', confidence: 90 })
+const confirmed = (id: string) => ({ id, verdict: 'confirmed', evidence: 'src/a.ts:3 — да', severity: 'blocking', confidence: 90 })
 
 test('thread: у каждой находки Tn или null; неизвестный тред — null', () => {
   const result = collectFindings({ ...base, threads: THREADS, raw: raw([finding(), finding({ id: 'A-2', thread: 'T9' }), finding({ id: 'A-3', thread: 'T1' })], ['A-1', 'A-2', 'A-3'].map(confirmed)) })
@@ -158,11 +178,17 @@ test('fix-check (repeats: false): ответ в треде находку не �
 })
 
 test('C: closed с тредом → «закрыто в обсуждении»; без известного треда — cannot-refute', () => {
-  const result = collectFindings({ ...base, threads: THREADS, raw: raw([finding(), finding({ id: 'A-2', severity: 'critical' })], [
+  const result = collectFindings({ ...base, threads: THREADS, raw: raw([finding(), finding({ id: 'A-2', severity: 'blocking' })], [
     { id: 'A-1', verdict: 'closed', thread: 'T2', evidence: 'автор вынес в #205' },
     { id: 'A-2', verdict: 'closed', thread: 'T7', evidence: '?' },
   ]) })
   assert.deepEqual(result.unconfirmed.map(f => [f.id, f.mark, f.thread, f.evidence]), [['A-1', 'закрыто в обсуждении', 'T2', 'T2 — автор вынес в #205']])
   assert.deepEqual(result.dropped.map(d => d.reason), ['closed-in-discussion:T2'])
-  assert.deepEqual(result.findings.map(f => [f.id, f.mark]), [['A-2', 'не проверено']])
+  assert.deepEqual(result.belowBar.map(f => [f.id, f.mark]), [['A-2', 'C не проверил']])
+})
+
+test('finishTriage: в разборе своего PR класс todo принимается, в перепроверке — нет', () => {
+  const answers = { items: [{ id: 'a', class: 'todo', reason: 'не блокирует' }] }
+  assert.equal(finishTriage(answers, [{ id: 'a' }], 'feedback')[0].class, 'todo')
+  assert.equal(finishTriage(answers, [{ id: 'a' }], 'recheck')[0].class, 'unknown')
 })

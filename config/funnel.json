@@ -1,11 +1,9 @@
 {
   "bots": ["ai-review-bot"],
   "threshold": [
-    { "verdict": "confirmed", "severity": ["critical", "important"], "min": 75, "result": "in" },
-    { "verdict": "confirmed", "severity": ["minor"], "min": 85, "result": "in" },
-    { "verdict": "confirmed", "severity": ["critical"], "min": 50, "result": "in", "mark": "средняя вероятность" },
-    { "verdict": "confirmed", "severity": ["important", "minor"], "min": 50, "result": "below" },
-    { "verdict": "cannot-refute", "severity": ["critical"], "min": 0, "result": "in", "mark": "не проверено" },
-    { "verdict": "cannot-refute", "severity": ["important", "minor"], "min": 50, "result": "below", "mark": "C не проверил" }
+    { "verdict": "confirmed", "severity": ["blocking"], "min": 75, "result": "in" },
+    { "verdict": "confirmed", "severity": ["non-blocking"], "min": 85, "result": "in" },
+    { "verdict": "confirmed", "severity": ["blocking", "non-blocking"], "min": 50, "result": "below" },
+    { "verdict": "cannot-refute", "severity": ["blocking", "non-blocking"], "min": 50, "result": "below", "mark": "C не проверил" }
   ]
 }

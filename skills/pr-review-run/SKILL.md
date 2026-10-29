@@ -36,10 +36,10 @@ a check; `mark` says why, `evidence` has C's argument), `dropped` (ids with reas
 PR's threads before this run (`threads`: `id`, `place`, `status`, `last` — whose word is last, `lastAuthorReply`), `open` —
 ids of the open threads, `questions` — questions with no answer. Every finding has `thread` (`T<n>` or `null`); a
 follow-up to a thread also has `followUp`. In Russian, in this order:
-1. `Вердикт: <verdict>` with one line of reason, from `findings` and the open threads: Blocked if any critical, Changes
-   requested if any important or any thread in `discussion.open`, Approved with comments if only minor, Approved if none.
+1. `Вердикт: <verdict>` with one line of reason, from `findings` and the open threads: Changes requested if any blocking
+   finding or any thread in `discussion.open`, Approved with comments if only non-blocking, Approved if none.
 2. `Статус: <status>` from `context.json`.
-3. «Подтверждённые» — each of `findings`: `<id> · <level>[ · <mark>][ · <thread>] · <file>:<lines>` — the problem; its
+3. «Подтверждённые» — each of `findings`: `<id> · <блокирует: <category> | не блокирует>[ · <mark>][ · <thread>] · <file>:<lines>` — the problem; its
    failure scenario or the rule it breaks; with `followUp` also «follow-up к <thread>: <followUp>».
    Then «Обсуждение PR» — the open threads of `discussion.open` as `<id> · <place> · последнее слово: <last>`, the author's
    answers (`lastAuthorReply`, quoted), and every `questions` entry; nothing of that → «обсуждения нет».
@@ -51,9 +51,11 @@ follow-up to a thread also has `followUp`. In Russian, in this order:
    («повтор T1, автор ответил: …» or «закрыто в обсуждении»).
 A section with no entries is left out, except «Не проверялось».
 
-Levels: **critical** — breaks the product, loses data, or is exploitable; **important** — a measurable regression, a
-concrete risk, or a project-rule violation a reviewer would send back; **minor** — style, naming, preference. A finding
-states the problem, not the author. A rule quote stays in the report, never in a published comment.
+Levels: **blocking** — only five categories: `regression` (something that worked before the PR is broken), `goal` (the
+task's goal is not reached), `architecture`, `security`, `rule` (a project rule is broken); **non-blocking** — everything
+else: a bug in new code that breaks nothing that worked and does not defeat the goal, an edge case, a missing test,
+style, naming. Non-blocking findings go to the author as TODOs, fixed in a later PR. A finding states the problem, not
+the author. A rule quote stays in the report, never in a published comment.
 
 Own PR (`isOwn`) or closed PR: the report is the result — `review_finish`, stop.
 
@@ -66,21 +68,22 @@ narrow places), the Plannotator option splits in two: «Plannotator: тольк�
 «Не публиковать» → section 4.
 
 Texts: `.review-kit/run/<N>/texts.json` = `{"comments": {"<id>": "<comment>"}}` — no summary: the review has no general
-comment. A comment is in Russian, one or two short sentences: what is wrong and what to change. No failure scenario, no
-rule quote, no level, no greeting or thanks.
+comment. In Russian, no failure scenario, no rule quote, no level, no greeting or thanks. A blocking comment — one or two
+short sentences: what is wrong and what to change. A non-blocking comment — one sentence, the text of the future TODO;
+the tool prefixes it with «TODO: » itself, never write the prefix.
 
 ### Directly
 
-1. List every finding of the three groups, one line each: `<id> · <подтверждена | ниже порога | не подтверждена> · <level>
-   · <file>:<line> — <problem>`. Ask in text «Какие публикуем? Номера через запятую или «все»» and end the turn.
+1. List every finding of the three groups, one line each: `<id> · <подтверждена | ниже порога | не подтверждена> ·
+   <блокирует: <category> | не блокирует> · <file>:<line> — <problem>`. Ask in text «Какие публикуем? Номера через запятую или «все»» and end the turn.
    No findings at all → skip the list, `ids: []`. The user's answer to «Как публикуем?» or to this list may already name
    the verdict and the ids («апрувим без комментариев» → approve, `ids: []`; «запросить изменения по A-1» → request
    changes, `ids: ["A-1"]`) — then skip the list.
 2. Write `texts.json` with a comment for each chosen id. No ids chosen → no `texts.json`: the approval goes out bare —
    no body and no comments anywhere.
 3. `review_publish` with `pr`, `ids`, and `verdict` (`approve` | `request-changes`) whenever the user named one — it
-   overrides the computed verdict. Without it the tool picks the verdict itself: critical or important findings, an
-   open thread of the PR, or in a recheck an open or partial earlier comment → request changes, otherwise approve —
+   overrides the computed verdict. Without it the tool picks the verdict itself: a blocking finding, an open blocking
+   thread of the PR, or in a recheck an open or partial blocking earlier comment → request changes, otherwise approve —
    but request changes only when something goes to the author (chosen findings or replies); with nothing chosen it
    approves. An explicit request-changes with nothing chosen is refused (`not published: запрос изменений без
    комментариев …`) — ask the user to pick findings or approve. It shows the review and asks the user

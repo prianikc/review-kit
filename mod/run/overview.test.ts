@@ -40,7 +40,7 @@ test('triageText: номера как в обзоре, вердикт слова
     { id: items[1].id, class: 'valid', reason: 'описал в README', fixed: true },
   ])
   assert.equal(text, [
-    'Итог разбора PR 5: исправим 0, уже исправлено 1, не согласны 1, вопросы 0, вне задачи 0.',
+    'Итог разбора PR 5: исправим 0, в TODO 0, уже исправлено 1, не согласны 1, вопросы 0, вне задачи 0.',
     '1. `a.ts:3` — carol: Имя (ревьюер не согласен с прошлым ответом)\n   → не согласны — отклоняем: так требует API',
     '2. общий — erin: Опишите миграцию\n   → уже исправлено: описал в README',
   ].join('\n'))
@@ -52,4 +52,11 @@ test('triageText: нет ответа агента — вопрос; длинн�
   assert.match(text, /вопросы 1/)
   assert.match(text, /erin: x+…\n   → вопрос — нужен ответ$/)
   assert.ok(text.split('\n')[1].length < 160)
+})
+
+test('triageText: todo — «не блокирует — в TODO» и отдельный счёт', () => {
+  const items = intakeItems(PR)
+  const text = triageText(5, items, [{ id: items[0].id, class: 'todo', reason: 'стиль, не ломает' }, { id: items[1].id, class: 'valid', reason: 'нет проверки' }])
+  assert.match(text, /^Итог разбора PR 5: исправим 1, в TODO 1, /)
+  assert.match(text, /→ не блокирует — в TODO: стиль, не ломает/)
 })
