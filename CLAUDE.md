@@ -11,7 +11,9 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 |---|---|
 | `.claude-plugin/` | манифест (`plugin.json`: версия, `userConfig`) и `marketplace.json` |
 | `hooks/hooks.json` | подключает мод `mod/register.ts` |
-| `mod/register.ts` | команды `/pr…`, инструменты `review_*`, `conflict_start`, `replies_publish`, `commit_push`, `guide_prepare`, хуки, состояние прогона |
+| `mod/register.ts` | описания команд `/pr…` и инструментов, подключение хуков (логика — в `mod/kit/`), хуки гейта агентов |
+| `mod/kit/` | логика мода: `engine` (общие опоры), `state` (прогон), `forge` (хостинг и конфиг), `start` (старт, stash, самоочистка), `workflow` (вход агентам, сбор), `publish` (ревью, ответы, commit+push), `finish` (`review_finish`), `tabs` (Orca), `plannotator`, `gate`; сценарные тесты — `scenarios.test.ts` |
+| `mod/testing/` | опоры тестов: `repo.ts` (git во временной папке), `engine.ts` (фейковый движок) |
 | `mod/forge/` | модель хостинга (`types.ts`), выбор адаптера и токена (`index.ts`), адаптеры (`forgejo.ts`), фейк для тестов |
 | `mod/status.ts` | сценарий и статус PR, intake замечаний |
 | `mod/run/` | правила Claude Code для PR (`rules.ts`), вход агентам (`input.ts`), обсуждение PR (`discussion.ts`), сбор находок и триажа (`findings.ts`), тело ревью и ответы (`review.ts`), обзор и итог замечаний к своему PR (`overview.ts`) |
@@ -41,8 +43,10 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 - Агенты A–D запускаются только своими типами (`review-kit:correctness` и т.д.) из workflow — gate висит только на них.
 - Всё зависящее от хостинга — только в адаптере `mod/forge/`. Новая система — новый файл адаптера, регистрация и
   тесты маппинга, без правок ядра; чего система не умеет — через `capabilities`. Исключение: переменные токена читаются
-  в `register.ts` (`readTokens`), потому что `$.env.get` требует литеральных имён.
+  в `mod/kit/forge.ts` (`readTokens`), потому что `$.env.get` требует литеральных имён.
 - Детерминированная работа — в моде, в скилле только то, что требует суждения модели.
+- Ключ состояния (`{ plugin, key }`) объявляется литералом в том файле, где вызывается `$.state` или `update`, и не
+  экспортируется; модуль хуков импортирует свои файлы только статически (`claude plugin validate` это проверяет).
 
 ## Соглашения
 
