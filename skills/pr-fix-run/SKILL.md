@@ -43,7 +43,7 @@ review-kit:pr-feedback-run first.
    - `not done: … коммита нет — <hook output>` → show it, fix what it reports, recompute the round's paths (step 3), `commit_push` again.
    - `not done: изменены файлы вне списка …` → add those paths to the round or revert them, `commit_push` again.
    - `not pushed: ветка на origin ушла вперёд …` → ask the user to run `! git pull --rebase` themselves, or `git pull --rebase`
-     in their own terminal if `!` is refused (inside a run the mod refuses `git pull` and `git rebase` from you), then
+     in their own terminal if `!` is refused, then
      `commit_push` again with the same message.
    - `not pushed: push не прошёл …` → offer `commit_push` again; it only pushes.
 8. Replies (below), then `review_finish`.

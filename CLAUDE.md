@@ -18,7 +18,6 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 | `mod/guide.ts` | вход скилла `guide`: цель (PR или коммит), заголовок, сообщение, коммиты, stat, diff |
 | `mod/git.ts` | переключение на PR, раунд, слияние базы, commit+push, уборка, worktree |
 | `mod/orca.ts`, `mod/plannotator.ts` | интеграции с Orca и Plannotator |
-| `mod/policy.ts` | guard прогона: запрет сырых git/curl-команд |
 | `mod/gate.ts` | gate чтения манифеста агентами |
 | `funnel/` | Workflow-скрипты: `review-funnel.js` (A/B → C), `triage.js` (D) |
 | `agents/` | `correctness` (A), `quality` (B), `refuter` (C), `triage` (D) |
@@ -33,8 +32,8 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 - Публикация ревью и ответов, commit+push — только инструментами `review_publish`, `replies_publish`, `commit_push`;
   подтверждение они спрашивают сами. Исключение: ревью по решению Plannotator публикуется без вопроса — решение и есть
   подтверждение («Отправить аннотации» — запрос изменений, «Approve» — одобрение).
-- Внутри прогона внешние эффекты — только через инструменты мода. Исключение — набранная пользователем команда из
-  `manualCommitCommands` (`.claude/review-kit.local.json`): ровно `git commit`. Кит не знает других плагинов по имени.
+- Скиллы публикуют ревью и ответы, коммитят и пушат только инструментами мода; запретов команд в ките нет — их задают
+  правила проекта и окружения. Кит не знает других плагинов по имени.
 - Каждая остановка скилла заканчивается `review_finish` (кроме остановок Plannotator в `pr-fix-run`).
 - Ветки и stash удаляются только через `/pr cleanup`.
 - Находка агента без сценария отказа отбрасывается.
