@@ -3,7 +3,7 @@ import { allowsManualCommit, classifyBash, guardText, opensCommitWindow } from '
 import { manifestPaths, MAX_RETURNS, parseManifest, parseRole, unreadFiles, type GatedAgent } from './gate.ts'
 import { ADAPTERS, createProvider, selectProvider, withTimeout, type ExplicitConfig } from './forge/index.ts'
 import type { ForgeProvider } from './forge/types.ts'
-import { ACTIONABLE, contextOf, placeAll, prListText, pullRows, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type PrContext, type PrData } from './status.ts'
+import { ACTIONABLE, commentIds, contextOf, driftOf, placeAll, prListText, pullRows, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type PrContext, type PrData, type PrSnapshot } from './status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, type TriageItem } from './run/input.ts'
 import { readRules } from './run/rules.ts'
 import { collectFindings, finishTriage, reviewPool, type Finding, type FindingsResult, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
@@ -563,7 +563,7 @@ function runner($: EngineInterface): Run {
   return async (argv, init) => $.process.run(argv, { cwd: await $.session.root(), ...init })
 }
 
-async function runContext($: EngineInterface, pr: number): Promise<{ dir: string; context: { head: string; base: string; model: string } }> {
+async function runContext($: EngineInterface, pr: number): Promise<{ dir: string; context: { head: string; headSha: string; base: string; model: string } }> {
   if ((await activeRun($)) !== pr) throw new Error(`нет активного прогона PR ${pr}`)
   const dir = await runDir($, pr)
   return { dir, context: JSON.parse(String(await $.fs.read(`${dir}/context.json`))) }
@@ -623,11 +623,13 @@ async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; i
 
 async function prepare($: EngineInterface, pr: number, kind: PrepareKind, paths: string[]): Promise<{ workflows: WorkflowSpec[]; notes: string[]; overview?: string }> {
   const { dir, context } = await runContext($, pr)
-  const discussion: Discussion & { failed?: string } = await loadDiscussion($, pr).catch((error: unknown) => {
+  const loaded: { data?: PrData; discussion: Discussion & { failed?: string } } = await Promise.all([loadPr(await forge($), pr), botLogins($)]).then(([data, bots]) => ({ data, discussion: discussionOf(data, { bots, description: true }) }), (error: unknown) => {
     const failed = (error as Error).message
-    return { threads: [], questions: [], truncated: false, text: `## DISCUSSION\nобсуждение не загрузилось: ${failed}`, failed }
+    return { discussion: { threads: [], questions: [], truncated: false, text: `## DISCUSSION\nобсуждение не загрузилось: ${failed}`, failed } }
   })
+  const { discussion } = loaded
   await $.fs.write(`${dir}/discussion.json`, JSON.stringify(discussionFacts(discussion)))
+  if (kind === 'review' || kind === 'recheck') await $.fs.write(`${dir}/snapshot.json`, JSON.stringify({ headSha: context.headSha, commentIds: loaded.data ? commentIds(loaded.data) : null }))
   const base = { pr, dir, model: context.model, discussion }
   const parts: Array<{ spec: WorkflowSpec; notes: string[] }> = []
   if (kind === 'review') parts.push(await writeWorkflow($, { ...base, id: 'funnel', base: context.base, head: context.head, rulesRev: context.base, foreign: true }))
@@ -671,7 +673,7 @@ async function collect($: EngineInterface, pr: number, id: WorkflowId, outputFil
     const items = finishTriage(raw, source.items ?? source.prior ?? [], id === 'triage' ? 'feedback' : 'recheck')
     const result = JSON.stringify({ items }, null, 2)
     await $.fs.write(`${dir}/${id === 'triage' ? 'triage' : 'statuses'}.json`, result)
-    return id === 'triage' ? `${triageText(pr, (source.items ?? []) as IntakeItem[], items)}\n\ntriage: .review-kit/run/${pr}/triage.json` : result
+    return id === 'triage' ? `${triageText(pr, (source.items ?? []) as IntakeItem[], items)}\n\ntriage: .review-kit/run/${pr}/triage.json` : staleMarked($, pr, dir, result)
   }
   const run = runner($)
   const { base, head } = JSON.parse(String(await $.fs.read(`${out}/range.json`))) as { base: string; head: string }
@@ -688,7 +690,20 @@ async function collect($: EngineInterface, pr: number, id: WorkflowId, outputFil
   })
   const json = JSON.stringify({ ...result, discussion: { ...discussion, open: openThreads(discussion.threads) } }, null, 2)
   await $.fs.write(id === 'fix-check' ? `${out}/findings.json` : `${dir}/findings.json`, json)
-  return json
+  return id === 'fix-check' ? json : staleMarked($, pr, dir, json)
+}
+
+async function staleness($: EngineInterface, pr: number, dir: string): Promise<string | undefined> {
+  const context = await readJson<{ headSha?: string }>($, `${dir}/context.json`, {})
+  const snapshot = await readJson<PrSnapshot>($, `${dir}/snapshot.json`, { headSha: context.headSha ?? '', commentIds: null })
+  if (!snapshot.headSha) return undefined
+  const [data, bots] = await Promise.all([loadPr(await forge($), pr), botLogins($)])
+  return driftOf(snapshot, data, [data.me, ...bots])
+}
+
+async function staleMarked($: EngineInterface, pr: number, dir: string, text: string): Promise<string> {
+  const note = await staleness($, pr, dir).then(found => found ? `PR изменился во время прогона: ${found} — отчёт устарел` : '', (error: unknown) => `свежесть PR не проверена: ${(error as Error).message}`)
+  return note ? `${note}\n\n${text}` : text
 }
 
 function isActive($: EngineInterface): IsActive {
@@ -739,14 +754,26 @@ async function publishReview($: EngineInterface, { pr, ids, from, verdict: asked
     const place = new Map(prior.map(p => [p.id, p.path ? `${p.path}:${p.line}` : 'общее']))
     return `not published: автор ответил, а решение по ответу не принято: ${undecided.map(id => place.get(id) ?? id).join(', ')} — спросите пользователя и запишите accepted или open в statuses.json`
   }
+  const stale = await staleness($, pr, dir).then(note => ({ note }), (error: unknown) => ({ error: (error as Error).message }))
+  if ('error' in stale) return `not published: свежесть PR не проверена — ${stale.error}`
+  if (stale.note) return `not published: PR обновился после снимка: ${stale.note} — перезапустите ${recheck ? 'перепроверку' : 'ревью'}: /pr-${recheck ? 'recheck' : 'review'} ${pr} → «Начать заново»`
   const provider = await forge($)
   const covered = parseCovered(await gitText(runner($), ['diff', '-U0', '--no-color', '--no-renames', context.base, context.head]))
   const discussion = await readJson<DiscussionFacts>($, `${dir}/discussion.json`, { threads: [], questions: [], truncated: false })
-  const verdict: VerdictName = chosenVerdict({ selected, statuses, decision, verdict: asked, openThreads: openThreads(discussion.threads, statuses).length })
+  const messages = Object.fromEntries(statuses.filter(s => s.message?.trim()).map(s => [s.id, String(s.message)]))
+  const content = selected.length + Object.keys(messages).length + (plannotator && texts.summary?.trim() ? 1 : 0)
+  const chosen = (() => {
+    try {
+      return { verdict: chosenVerdict({ selected, statuses, decision, verdict: asked, openThreads: openThreads(discussion.threads, statuses).length, content }) }
+    } catch (error) {
+      return { error: (error as Error).message }
+    }
+  })()
+  if ('error' in chosen) return `not published: ${chosen.error}`
+  const verdict: VerdictName = chosen.verdict
   const { draft, notes } = buildDraft({ selected, texts: plannotator ? texts : { comments: texts.comments }, verdict, approve: APPROVABLE.includes(verdict), covered, capabilities: provider.capabilities })
   const bare = draft.verdict === 'approve' && !draft.body.trim() && draft.comments.length === 0
   const inline = draft.comments.map(c => `• ${c.path}:${c.line} — ${c.body}`).join('\n')
-  const messages = Object.fromEntries(statuses.filter(s => s.message?.trim()).map(s => [s.id, String(s.message)]))
   const replies = buildReplies(prior.map(p => ({ id: p.id, threadId: p.threadId ?? null, quote: p.quote ?? '' })), messages)
   const where = new Map(prior.map(p => [p.id, p.path ? `${p.path}:${p.line}` : 'общее']))
   const answers = Object.keys(messages).length ? `\n\nОтветы автору:\n${Object.entries(messages).map(([id, text]) => `• ${where.get(id) ?? id} — ${text}`).join('\n')}` : ''

@@ -100,6 +100,15 @@ test('listThreads: группировка, порядок, resolved, общие 
   assert.deepEqual(general, [{ id: '200', author: 'carol', body: 'Когда релиз?', createdAt: '2026-10-02T09:00:00Z' }])
 })
 
+test('listThreads: ответ из другого ревью на ту же строку — в том же треде, id по раннему комментарию', async () => {
+  const reply = [{ id: 103, user: { login: 'Bob' }, body: 'Исправлено', created_at: '2026-10-01T13:00:00Z', path: 'src/a.ts', position: 5, commit_id: 'aaa111', pull_request_review_id: 15, resolver: null }]
+  const { instance } = provider({ ...READ_ROUTES, [`GET ${API}/pulls/42/reviews/15/comments`]: ok(JSON.stringify(reply)) })
+  const { threads } = await instance.listThreads(42)
+  assert.equal(threads.length, 2)
+  assert.equal(threads[0].id, '11:src/a.ts:5')
+  assert.deepEqual(threads[0].comments.map(c => [c.id, c.reviewId]), [['100', '11'], ['101', '11'], ['103', '15']])
+})
+
 test('пагинация: 50 + 3 ревью — две страницы, ничего не теряется', async () => {
   const review = (id: number) => ({ id, user: { login: 'x' }, state: 'COMMENT', body: '', commit_id: 'c', submitted_at: '2026-10-01T00:00:00Z', dismissed: false })
   const page1 = Array.from({ length: 50 }, (_, i) => review(i + 1))

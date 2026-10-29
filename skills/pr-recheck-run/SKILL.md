@@ -18,6 +18,8 @@ and stop. Ask nothing before the report, except the author's answers of step 4.
    `review-kit: …` line. Then end the turn with «Отчёт придёт, когда агенты закончат.» and do nothing else until both
    notifications arrive; a notification that arrives before the guide is done waits for it. Then `review_collect` for
    each with its `id` and `<output-file>`.
+   - Either answer starts with «PR изменился во время прогона:» → as in step 4 of review-kit:pr-review-run: show the
+     line, no report or verdict, ask «Перезапустить» / «Остановить».
    - `statuses` failed → «Статусы агентом не проверены», then do them yourself: for each `prior` item read the place at the
      PR head and write `.review-kit/run/<N>/statuses.json` = `{"items": [{"id", "class": "closed"|"open"|"partial"|"answered", "reason"}]}`
      (`answered` — the code is not fixed, but the item's `replies` hold the author's answer on substance).
@@ -36,7 +38,9 @@ and stop. Ask nothing before the report, except the author's answers of step 4.
    Blocked if any critical; Changes requested if any important finding, any `open`/`partial` earlier comment or any thread
    in `discussion.open` of `findings.json` that is not an earlier comment closed or accepted above; otherwise Approved.
 6. Publish: sections 3 and 4 of review-kit:pr-review-run; the statuses stay in the report — the review body does not
-   repeat them; `review_publish` counts open or partial earlier comments as reasons to request changes — the user's own verdict
+   repeat them; `review_publish` counts open or partial earlier comments as reasons to request changes
+   only together with something for the author — new findings or a reply from «Не принять и написать автору»; with
+   neither it approves — the user's own verdict
    («апрувим») goes in as `verdict` and overrides that. A refusal keeps the run open as section 4 says.
 7. `review_finish` once publishing is done or declined. Every stop of this skill ends with `review_finish`. Its `worktree …` line is handled as in section 4
    of review-kit:pr-review-run.

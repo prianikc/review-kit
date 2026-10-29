@@ -20,7 +20,7 @@ test('verdictName: по серьёзности; open/partial прошлые — 
 
 test('chosenVerdict: явный вердикт пользователя сильнее находок и статусов; решение Plannotator; иначе по находкам и статусам', () => {
   const partial = [{ class: 'partial' }]
-  assert.equal(chosenVerdict({ selected: [], statuses: partial }), 'Changes requested')
+  assert.equal(chosenVerdict({ selected: [], statuses: partial }), 'Approved')
   assert.equal(chosenVerdict({ selected: [], statuses: partial, verdict: 'approve' }), 'Approved')
   assert.equal(chosenVerdict({ selected: [f('A-1', 'important')], verdict: 'approve' }), 'Approved with comments')
   assert.equal(chosenVerdict({ selected: [f('A-1', 'minor')], verdict: 'request-changes' }), 'Changes requested')
@@ -55,8 +55,17 @@ test('buildDraft: одобрение без находок — без тела �
   assert.equal(buildDraft({ selected: [f('A-1', 'minor')], texts: { summary: 'Итог', comments: { 'A-1': 'x' } }, verdict: 'Approved with comments', approve: true, covered: COVERED, capabilities: CAPS }).draft.body, 'Итог')
 })
 
-test('buildDraft: request changes с комментариями — тело пустое; без комментариев — «Нужны правки.»', () => {
-  assert.equal(buildDraft({ selected: [f('A-1', 'critical')], texts: { comments: { 'A-1': 'x' } }, verdict: 'Blocked', approve: false, covered: COVERED, capabilities: CAPS }).draft.body, '')
+test('chosenVerdict: без содержания запроса изменений нет — вычисленный становится одобрением, явный — ошибка', () => {
+  assert.equal(chosenVerdict({ selected: [], statuses: [{ class: 'partial' }] }), 'Approved')
+  assert.equal(chosenVerdict({ selected: [], openThreads: 2 }), 'Approved')
+  assert.throws(() => chosenVerdict({ selected: [], verdict: 'request-changes' }), /запрос изменений без комментариев не отправляется/)
+  assert.throws(() => chosenVerdict({ selected: [], decision: 'annotated' }), /запрос изменений без комментариев не отправляется/)
+  assert.equal(chosenVerdict({ selected: [], statuses: [{ class: 'partial' }], content: 1 }), 'Changes requested')
+  assert.equal(chosenVerdict({ selected: [f('A-1', 'minor')], openThreads: 1 }), 'Changes requested')
+})
+
+test('buildDraft: request changes с пустым телом — «Нужны правки.», с комментариями к строкам и без (Forgejo требует тело)', () => {
+  assert.equal(buildDraft({ selected: [f('A-1', 'critical')], texts: { comments: { 'A-1': 'x' } }, verdict: 'Blocked', approve: false, covered: COVERED, capabilities: CAPS }).draft.body, 'Нужны правки.')
   assert.equal(buildDraft({ selected: [], texts: { comments: {} }, verdict: 'Changes requested', approve: false, covered: COVERED, capabilities: CAPS }).draft.body, 'Нужны правки.')
 })
 
@@ -96,8 +105,8 @@ test('buildReplies: тред/общий, цитата — первая стро�
   assert.throws(() => buildReplies(items, { nope: 'x' }), /нет пункта для ответа: nope/)
 })
 
-test('chosenVerdict: открытый тред не даёт одобрить сам; явный вердикт и Plannotator сильнее', () => {
-  assert.equal(chosenVerdict({ selected: [], openThreads: 1 }), 'Changes requested')
+test('chosenVerdict: открытый тред не даёт одобрить, если есть что отправить; явный вердикт и Plannotator сильнее', () => {
+  assert.equal(chosenVerdict({ selected: [], openThreads: 1 }), 'Approved')
   assert.equal(chosenVerdict({ selected: [f('A-1', 'minor')], openThreads: 2 }), 'Changes requested')
   assert.equal(chosenVerdict({ selected: [f('A-1', 'critical')], openThreads: 1 }), 'Blocked')
   assert.equal(chosenVerdict({ selected: [], openThreads: 1, verdict: 'approve' }), 'Approved')
