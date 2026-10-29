@@ -1,7 +1,7 @@
 import type { Reply, ReviewDraft } from '../forge/types.ts'
 import { MARKER } from '../status.ts'
 import type { Finding } from './findings.ts'
-import type { DiscussionThread } from './discussion.ts'
+import { NON_BLOCKING_PREFIX, type DiscussionThread } from './discussion.ts'
 
 export const APPROVABLE: readonly VerdictName[] = ['Approved', 'Approved with comments']
 const DEFAULT_CHANGES_BODY = 'Нужны правки.'
@@ -12,7 +12,7 @@ const EMPTY_CHANGES = 'запрос изменений без комментар
 const QUOTE_LIMIT = 200
 const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/
 
-export type VerdictName = 'Blocked' | 'Changes requested' | 'Approved with comments' | 'Approved'
+export type VerdictName = 'Changes requested' | 'Approved with comments' | 'Approved'
 export type ExplicitVerdict = 'approve' | 'request-changes'
 
 export interface Texts {
@@ -20,14 +20,13 @@ export interface Texts {
   comments: Record<string, string>
 }
 
-export function verdictName(findings: Array<{ severity: string }>, statuses: Array<{ class: string; severity?: string }> = []): VerdictName {
-  const levels = new Set([...findings.map(item => item.severity), ...statuses.filter(s => UNRESOLVED.includes(s.class)).map(s => s.severity ?? 'important')])
-  if (levels.has('critical')) return 'Blocked'
-  if (levels.has('important')) return 'Changes requested'
-  return levels.size ? 'Approved with comments' : 'Approved'
+export function verdictName(findings: Array<{ severity: string }>, statuses: Array<{ class: string; blocking?: boolean }> = []): VerdictName {
+  const blocking = findings.some(item => item.severity === 'blocking') || statuses.some(s => UNRESOLVED.includes(s.class) && s.blocking !== false)
+  if (blocking) return 'Changes requested'
+  return findings.length ? 'Approved with comments' : 'Approved'
 }
 
-export function chosenVerdict({ selected, statuses = [], decision, verdict, openThreads = 0, content = selected.length }: { selected: Array<{ severity: string }>; statuses?: Array<{ class: string; severity?: string }>; decision?: string; verdict?: ExplicitVerdict; openThreads?: number; content?: number }): VerdictName {
+export function chosenVerdict({ selected, statuses = [], decision, verdict, openThreads = 0, content = selected.length }: { selected: Array<{ severity: string }>; statuses?: Array<{ class: string; blocking?: boolean }>; decision?: string; verdict?: ExplicitVerdict; openThreads?: number; content?: number }): VerdictName {
   if (verdict === 'approve' || decision === 'approved') return selected.length ? 'Approved with comments' : 'Approved'
   if (verdict === 'request-changes' || decision === 'annotated') {
     if (content === 0) throw new Error(EMPTY_CHANGES)
@@ -40,7 +39,7 @@ export function chosenVerdict({ selected, statuses = [], decision, verdict, open
 
 export function openThreads(threads: DiscussionThread[], statuses: Array<{ id: string; class: string }> = []): string[] {
   const settled = new Set(statuses.filter(s => SETTLED.includes(s.class)).map(s => s.id.split('/').at(-1)))
-  return threads.filter(thread => thread.status === 'open' && !thread.commentIds.some(id => settled.has(id))).map(thread => thread.id)
+  return threads.filter(thread => thread.status === 'open' && !thread.nonBlocking && !thread.commentIds.some(id => settled.has(id))).map(thread => thread.id)
 }
 
 export function undecidedAnswers(statuses: Array<{ id: string; class: string }>): string[] {
@@ -74,9 +73,10 @@ export function buildDraft({ selected, texts, verdict, approve, covered, capabil
   if (!capabilities.inline && selected.length) notes.push('система не умеет комментарии к строкам — все комментарии в теле ревью')
   const inline = capabilities.inline ? selected.filter(item => covered.get(item.file)?.has(item.line)) : []
   const outside = selected.filter(item => !inline.includes(item))
-  const parts = [(texts.summary ?? '').trim(), ...(outside.length ? [`Вне diff:\n${outside.map(item => `- ${item.file}:${item.line} — ${texts.comments[item.id]}`).join('\n')}`] : [])]
+  const text = (item: Finding) => (item.role && item.severity === 'non-blocking' ? `${NON_BLOCKING_PREFIX}${texts.comments[item.id]}` : texts.comments[item.id])
+  const parts = [(texts.summary ?? '').trim(), ...(outside.length ? [`Вне diff:\n${outside.map(item => `- ${item.file}:${item.line} — ${text(item)}`).join('\n')}`] : [])]
   const body = approve && !selected.length ? '' : parts.filter(Boolean).join('\n\n')
-  const comments = inline.map(item => ({ path: item.file, line: item.line, body: texts.comments[item.id] }))
+  const comments = inline.map(item => ({ path: item.file, line: item.line, body: text(item) }))
   const draftVerdict = approve ? 'approve' : wantsChanges && capabilities.requestChanges ? 'request-changes' : 'comment'
   const finalBody = body || (draftVerdict === 'request-changes' ? DEFAULT_CHANGES_BODY : !comments.length && draftVerdict !== 'approve' ? DEFAULT_EMPTY_BODY : '')
   return { draft: { verdict: draftVerdict, body: finalBody, comments }, notes }

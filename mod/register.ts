@@ -12,7 +12,7 @@ import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, hotspotAnnotations, parseMessage, reconcile, type Hotspot } from './plannotator.ts'
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
 import { overviewText, triageText } from './run/overview.ts'
-import { discussionOf, type Discussion, type DiscussionThread } from './run/discussion.ts'
+import { discussionOf, NON_BLOCKING_PREFIX, type Discussion, type DiscussionThread } from './run/discussion.ts'
 import { APPROVABLE, buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, undecidedAnswers, type ExplicitVerdict, type Texts, type VerdictName } from './run/review.ts'
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
@@ -22,6 +22,7 @@ const COMMIT_TURN = { plugin: 'review-kit', key: 'commitTurn' } as const
 const CONFIRM_TEXT_LIMIT = 6000
 const HTTP_TIMEOUT_MS = 30_000
 const CONFIG_PATH = '.claude/review-kit.local.json'
+const ROADMAP_DIR = 'docs/roadmap'
 const SETTINGS: { options: Record<string, unknown> } = { options: {} }
 const KEEP = 'Оставить'
 const RECHECK_OPTION = 'Перепроверка — изменения после моего ревью'
@@ -160,6 +161,16 @@ async function explicitConfig($: EngineInterface): Promise<ExplicitConfig | unde
     return { provider: field('provider'), host: field('host'), owner: field('owner'), repo: field('repo') }
   } catch {
     throw new Error(`${CONFIG_PATH}: не JSON`)
+  }
+}
+
+async function roadmapDir($: EngineInterface): Promise<string> {
+  const text = await $.fs.read(`${await projectRoot($)}/${CONFIG_PATH}`).then(String, () => '')
+  try {
+    const dir = text ? (JSON.parse(text) as { roadmapDir?: unknown }).roadmapDir : undefined
+    return typeof dir === 'string' && dir.trim() ? dir.trim().replace(/\/+$/, '') : ROADMAP_DIR
+  } catch {
+    return ROADMAP_DIR
   }
 }
 
@@ -506,7 +517,8 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
     await $.fs.write(`${dir}/recheck.json`, JSON.stringify({ ...base, reviewId: prior.review.id, prior: prior.prior }, null, 2))
   }
   const plannotator = await runner($)(['plannotator', '--version']).then(result => result.exitCode === 0, () => false)
-  await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, model, scenario, plannotator }))
+  const roadmap = context.isOwn ? { roadmap: `${await roadmapDir($)}/pr-${pr}-review-fixes.md` } : {}
+  await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, model, scenario, plannotator, ...roadmap }))
   await openRun($, { pr, context, head: switched.head, scenario })
   if (scenario === 'conflict') return `PR ${pr} (свой, конфликт): дерево на ${context.headRef}${stash ? `, stash «${stash}»` : ''}.`
   const next = handOff($, pr, handoff, scenario)
@@ -685,7 +697,7 @@ async function collect($: EngineInterface, pr: number, id: WorkflowId, outputFil
   const discussion = await readJson<DiscussionFacts>($, `${out}/discussion.json`, { threads: [], questions: [], truncated: false })
   const result = collectFindings({
     raw, changed, lineCounts, rules, skipped: notAttached(states), table, ...(await workflowNotes($, out)),
-    ...(id === 'delta' ? { minSeverity: 'important' as Severity } : {}),
+    ...(id === 'delta' ? { minSeverity: 'blocking' as Severity } : {}),
     threads: discussion.threads, repeats: id !== 'fix-check',
   })
   const json = JSON.stringify({ ...result, discussion: { ...discussion, open: openThreads(discussion.threads) } }, null, 2)
@@ -747,8 +759,9 @@ async function publishReview($: EngineInterface, { pr, ids, from, verdict: asked
   if (unknown.length) return `not published: нет находки: ${unknown.join(', ')}`
   const selected = findings.filter(item => wanted.includes(item.id))
   if (decision === 'annotated' && selected.length === 0) return 'not published: в Plannotator остались только узкие места гайда — это подсказки, публиковать нечего. Свой комментарий — аннотация без строки [gN · узкое место гайда]'
-  const statuses = recheck ? (await readJson<{ items: Array<{ id: string; class: string; reason?: string; message?: string }> }>($, `${dir}/statuses.json`, { items: [] })).items : []
-  const prior = (await readJson<{ prior: Array<{ id: string; path: string | null; line: number | null; threadId?: string | null; quote?: string }> }>($, `${dir}/recheck.json`, { prior: [] })).prior
+  const prior = (await readJson<{ prior: Array<{ id: string; path: string | null; line: number | null; threadId?: string | null; quote?: string; body?: string }> }>($, `${dir}/recheck.json`, { prior: [] })).prior
+  const blockingOf = (id: string) => !(prior.find(p => p.id === id)?.body ?? '').trim().startsWith(NON_BLOCKING_PREFIX)
+  const statuses = recheck ? (await readJson<{ items: Array<{ id: string; class: string; reason?: string; message?: string }> }>($, `${dir}/statuses.json`, { items: [] })).items.map(s => ({ ...s, blocking: blockingOf(s.id) })) : []
   const undecided = undecidedAnswers(statuses)
   if (undecided.length) {
     const place = new Map(prior.map(p => [p.id, p.path ? `${p.path}:${p.line}` : 'общее']))
@@ -1157,7 +1170,7 @@ async function startPlannotator($: EngineInterface, pr: number, mode: Plannotato
 const TOOL_SPECS = [
   {
     name: 'review_publish',
-    description: 'Publish the review of the active review-kit run: findings by ids (or "all") — confirmed, below the bar or unconfirmed — with texts from texts.json. From chat the verdict follows the selected findings and, in a recheck, the statuses of earlier comments (critical/important or an open/partial earlier comment → request changes, otherwise approve); verdict: "approve" | "request-changes" — the verdict the user named — overrides that, and an approval without selected findings goes out bare. The tool asks the user itself, publishing only on «Да». from: "plannotator" publishes the Plannotator result without asking (annotated → request changes, approved → approve) and takes no verdict. Refuses when the run has no agent results. Answers "published: <url> (вердикт …)" or "not published: … (вердикт …)" — «пользователь отказал» or «окно подтверждения не открылось».',
+    description: 'Publish the review of the active review-kit run: findings by ids (or "all") — confirmed, below the bar or unconfirmed — with texts from texts.json. From chat the verdict follows the selected findings and, in a recheck, the statuses of earlier comments (a blocking finding or an open/partial blocking earlier comment → request changes, otherwise approve; nothing for the author → never request changes); verdict: "approve" | "request-changes" — the verdict the user named — overrides that, and an approval without selected findings goes out bare. The tool asks the user itself, publishing only on «Да». from: "plannotator" publishes the Plannotator result without asking (annotated → request changes, approved → approve) and takes no verdict. Refuses when the run has no agent results. Answers "published: <url> (вердикт …)" or "not published: … (вердикт …)" — «пользователь отказал» or «окно подтверждения не открылось».',
     inputSchema: { type: 'object', properties: { pr: { type: 'number' }, ids: { oneOf: [{ const: 'all' }, { type: 'array', items: { type: 'string' } }] }, from: { enum: ['chat', 'plannotator'] }, verdict: { enum: ['approve', 'request-changes'] } }, required: ['pr', 'ids'] },
     isDeferred: false,
   },

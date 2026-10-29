@@ -6,7 +6,9 @@ description: Use when review-kit opened a fix run for the user's own PR, or pr-f
 # pr-fix-run
 
 Read `.review-kit/run/<N>/context.json`. Items to fix: the `valid` entries without `fixed` of `.review-kit/run/<N>/triage.json`,
-or every entry of `.review-kit/run/<N>/findings.json` after a review of the own PR. Neither file → do section 1 of
+or every blocking entry of `.review-kit/run/<N>/findings.json` after a review of the own PR. Items to move to TODO: the
+`todo` entries of `triage.json`, or every non-blocking entry of `findings.json`.
+The reviewer never writes files into this branch — the TODOs and the roadmap are written and pushed here, by the PR's author. Neither file → do section 1 of
 review-kit:pr-feedback-run first.
 
 0. Dependencies, before any edit: `superpowers:writing-plans` is not among your skills → «Для раунда правок нужен плагин
@@ -15,7 +17,12 @@ review-kit:pr-feedback-run first.
    The round needs a fresher base of a PR stack → the user merges and pushes it before the round. A merge inside the run
    is allowed, but `commit_push` refuses until it is pushed («не продолжает базу раунда одним коммитом»).
 1. Run: `git status --porcelain --ignore-submodules=all > .review-kit/run/<N>/status-before.txt`
-2. Enter Plan Mode, plan the fixes of exactly these items with superpowers:writing-plans, exit Plan Mode, wait for approval, edit.
+2. Enter Plan Mode, plan the fixes and the TODOs of exactly these items with superpowers:writing-plans, exit Plan Mode,
+   wait for approval, edit. A TODO item: above the commented place, a comment in the file's own syntax
+   `TODO(review #<N>): <the comment's text after «TODO: », or its gist in one sentence> — <roadmap>`, `roadmap` from
+   `context.json`; then the roadmap file gets the item — create it with the heading `# PR <N> — ревью-фиксы` when absent,
+   add `- [ ] <file>:<line> — <text> (замечание: <author>, <place>)`, skip an item whose `<file>:<line>` is already
+   listed. The user may move a TODO item to «чиним сейчас». The roadmap is one of the round's paths.
 3. The round's paths = paths in `git status --porcelain --ignore-submodules=all` that are not in `status-before.txt`.
    The kit runs no checks: the project's pre-commit hook runs them at commit time.
 4. AskUserQuestion «Прогнать агентов по diff правок?» — yes → `review_prepare` with `pr`, `kind: "fix-check"`,
@@ -44,7 +51,7 @@ review-kit:pr-feedback-run first.
 ## Replies
 
 For every item write a draft to `.review-kit/run/<N>/replies.json` = `{"replies": {"<id>": "<text>"}}`: fixed in this round
-or earlier (`fixed`) — exactly «Исправлено»; invalid, question, out-of-scope — «Не исправлено: <one sentence: the reason, the
+or earlier (`fixed`) — exactly «Исправлено»; moved to TODO — «Перенесено в TODO: <file>:<line>»; invalid, question, out-of-scope — «Не исправлено: <one sentence: the reason, the
 answer to the question, or where it went>». No sha, no retelling of the change. Without a reply the thread stays open and the PR keeps the status
 «есть замечания». Show every draft as `<path>:<position>` (or «общий») — text and apply the
 user's edits. Then `replies_publish` with `pr` (it asks the user itself): `published: <n>` → report; `not published: …` →

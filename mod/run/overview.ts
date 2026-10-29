@@ -5,9 +5,9 @@ import type { TriageAnswer } from './findings.ts'
 const BODY_LIMIT = 500
 const LINE_LIMIT = 140
 const VERDICTS: Record<string, string> = {
-  valid: 'согласны — исправим', fixed: 'уже исправлено', invalid: 'не согласны — отклоняем', question: 'вопрос — нужен ответ', 'out-of-scope': 'вне задачи',
+  valid: 'согласны — исправим', todo: 'не блокирует — в TODO', fixed: 'уже исправлено', invalid: 'не согласны — отклоняем', question: 'вопрос — нужен ответ', 'out-of-scope': 'вне задачи',
 }
-const TALLY: Array<[string, string]> = [['valid', 'исправим'], ['fixed', 'уже исправлено'], ['invalid', 'не согласны'], ['question', 'вопросы'], ['out-of-scope', 'вне задачи']]
+const TALLY: Array<[string, string]> = [['valid', 'исправим'], ['todo', 'в TODO'], ['fixed', 'уже исправлено'], ['invalid', 'не согласны'], ['question', 'вопросы'], ['out-of-scope', 'вне задачи']]
 
 function clip(text: string, limit: number): string {
   const flat = text.replace(/\s+/g, ' ').trim()

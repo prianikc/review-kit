@@ -5,14 +5,16 @@ const VERDICTS = ['refuted', 'confirmed', 'cannot-refute', 'closed']
 const REPLY_LIMIT = 200
 const GATE_FAILURES = ['exhausted', 'stopped', 'hook-error', 'no-manifest']
 const EVIDENCE = /(?:^|[\s(`"'])([\p{L}\p{N}_./@-]+):(\d+)(?:-\d+)?/u
-const SEVERITY_RANK: Record<Severity, number> = { critical: 3, important: 2, minor: 1 }
+const SEVERITY_RANK: Record<Severity, number> = { blocking: 2, 'non-blocking': 1 }
+export const CATEGORIES: readonly Category[] = ['regression', 'goal', 'architecture', 'security', 'rule']
 const MIN_QUOTE_WORDS = 6
 const MIN_QUOTE_CHARS = 30
-const CLASSES: Record<TriageMode, string[]> = { feedback: ['valid', 'invalid', 'question', 'out-of-scope'], recheck: ['closed', 'open', 'partial', 'answered'] }
+const CLASSES: Record<TriageMode, string[]> = { feedback: ['valid', 'todo', 'invalid', 'question', 'out-of-scope'], recheck: ['closed', 'open', 'partial', 'answered'] }
 const FALLBACK: Record<TriageMode, string> = { feedback: 'question', recheck: 'unknown' }
 const TYPOGRAPHY: Record<string, string> = { '—': '-', '–': '-', '«': '"', '»': '"', '“': '"', '”': '"', '„': '"', 'ё': 'е', 'Ё': 'Е' }
 
-export type Severity = 'critical' | 'important' | 'minor'
+export type Severity = 'blocking' | 'non-blocking'
+export type Category = 'regression' | 'goal' | 'architecture' | 'security' | 'rule'
 export type TriageMode = 'feedback' | 'recheck'
 
 export interface Finding {
@@ -22,6 +24,7 @@ export interface Finding {
   line: number
   lines?: number[]
   severity: Severity
+  category?: Category
   confidence: number
   problem: string
   failureScenario?: string
@@ -94,9 +97,11 @@ function verdictOf(item: Finding, verdict: Record<string, unknown> | undefined):
   if (name === 'closed') return { ...item, verdict: 'closed', evidence, closedIn: typeof verdict.thread === 'string' ? verdict.thread : '' } as Finding
   if (name === 'refuted') return evidenceLine(evidence, item.file) !== null ? { ...item, verdict: 'refuted', evidence } : { ...item, verdict: 'cannot-refute' }
   if (name === 'confirmed') {
-    const severity = (verdict.severity as Severity) ?? item.severity
-    const ruleFloor = item.rule && SEVERITY_RANK[item.severity] >= SEVERITY_RANK.important && SEVERITY_RANK[severity] < SEVERITY_RANK.important
-    return { ...item, verdict: 'confirmed', severity: ruleFloor ? 'important' : severity, confidence: (verdict.confidence as number) ?? item.confidence, ...(evidence ? { evidence } : {}) }
+    const severity = verdict.severity === 'blocking' || verdict.severity === 'non-blocking' ? verdict.severity : item.severity
+    const category = CATEGORIES.includes(verdict.category as Category) ? verdict.category as Category : item.category
+    const ruleFloor = Boolean(item.rule) && item.severity === 'blocking'
+    const judged = ruleFloor ? { severity: 'blocking' as Severity, category: 'rule' as Category } : { severity, ...(category ? { category } : {}) }
+    return { ...item, verdict: 'confirmed', ...judged, confidence: (verdict.confidence as number) ?? item.confidence, ...(evidence ? { evidence } : {}) }
   }
   return { ...item, verdict: 'cannot-refute' }
 }
@@ -127,6 +132,16 @@ function ruleReason(rule: { file: string; quote: string }, rules: Map<string, st
 }
 
 function checkedItem(item: Finding, rules: Map<string, string>, changed: string[], lineCounts: Map<string, number>): { item: Finding } | { reason: string } {
+  const checked = checkedPlace(item, rules, changed, lineCounts)
+  if ('reason' in checked) return checked
+  const { category, ...rest } = checked.item
+  if (rest.severity !== 'blocking') return { item: rest }
+  if (!category || !CATEGORIES.includes(category)) return { reason: 'no-category' }
+  if (category === 'rule' && !rest.rule) return { reason: 'rule-category-without-rule' }
+  return { item: { ...rest, category } }
+}
+
+function checkedPlace(item: Finding, rules: Map<string, string>, changed: string[], lineCounts: Map<string, number>): { item: Finding } | { reason: string } {
   const file = resolvePath(item.file, changed)
   if (file === null) return { reason: 'file-not-in-diff' }
   if (!lineCounts.has(file)) return { reason: 'file-not-text' }

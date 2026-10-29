@@ -24,7 +24,7 @@ test('discussionOf: PR 201 — тред T1 с последним словом р
     general: [general('8917', 'afenin', 'Валидация вынесена в #205', '2026-10-02T09:00:00Z')],
   })
   const result = discussionOf(d)
-  assert.deepEqual(result.threads, [{ id: 'T1', place: '.env.example:13', status: 'open', last: 'мы', commentIds: ['c1'] }])
+  assert.deepEqual(result.threads, [{ id: 'T1', place: '.env.example:13', status: 'open', last: 'мы', nonBlocking: false, commentIds: ['c1'] }])
   assert.match(result.text, /^### T1 · \.env\.example:13 · open · последнее слово: мы\n- avartamonov \[мы\] \(ревью 1969, REQUEST_CHANGES\): PEP_\* нет в Joi$/m)
   assert.match(result.text, /### Общие комментарии\n- afenin \[автор\] \(issue 8917, 2026-10-02 09:00\): Валидация вынесена в #205/)
   assert.ok(result.text.indexOf('### T1') < result.text.indexOf('### Общие комментарии'))
@@ -72,4 +72,10 @@ test('discussionOf: длинное обсуждение обрезается п�
   assert.match(result.text, /обсуждение обрезано: показано \d+ из 30 блоков/)
   assert.match(result.text, /### T2 · f1\.ts:1 · open/)
   assert.equal(result.threads.length, 30)
+})
+
+test('discussionOf: тред, начатый неблокирующим «TODO:», помечен nonBlocking; обычный — нет', () => {
+  const todo = thread([comment('c1', 'avartamonov', 'TODO: вынести в константу\n\n<!-- review-kit -->', '2026-10-01T10:00:00Z')])
+  const plain = thread([comment('c2', 'carol', 'тут null', '2026-10-01T11:00:00Z', '1970')], false, 'b.ts', 2)
+  assert.deepEqual(discussionOf(data({ threads: [todo, plain] })).threads.map(t => [t.id, t.nonBlocking]), [['T1', true], ['T2', false]])
 })

@@ -15,7 +15,10 @@ Each class decides what happens to a comment, so each rests on code you actually
    thread — treat it as a reply. If the author points to another PR or commit as the fix, verify it there when it is
    reachable.
 2. Mode `feedback` — one class per item (a reviewer's comment on the PR):
-   - `valid` — the comment is right about the code at HEAD; it will be fixed;
+   - `valid` — the comment is right about the code at HEAD and blocks the merge; it will be fixed;
+   - `todo` — the comment is right but does not block: it starts with «TODO:», or it fits none of the blocking
+     categories (something that worked is broken, the task's goal is not reached, an architecture error, a security
+     error, a project rule is broken); it goes to a TODO in the code and the PR's roadmap;
    - `invalid` — the code is right and the comment is not; `reason` holds the explanation for the reviewer, in Russian;
    - `question` — the comment asks something, or you cannot decide without the author;
    - `out-of-scope` — right, but belongs to another task; `reason` names it.
@@ -28,6 +31,7 @@ Each class decides what happens to a comment, so each rests on code you actually
    objection, a reason it is not needed). Judge the code first: fixed → `closed` or `partial` whatever the reply says.
    `answered` never decides whether the reply is right — that is the user's call; `reason` sums up the author's argument
    in one sentence, in Russian, and says what in the code it rests on. A reply that only promises a fix, thanks or asks
-   nothing of substance is not an answer → `open`.
+   nothing of substance is not an answer → `open`. An earlier comment starting with «TODO:» is non-blocking: it is
+   `closed` when the code at HEAD has a TODO with its text, or the place is fixed.
 4. `evidence` — `<path from the repository root>:<line>` from your own Read, then ` — ` and a short reason.
 5. Answer only through the structured output, every item id exactly once.

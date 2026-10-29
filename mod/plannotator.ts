@@ -1,10 +1,9 @@
 import type { Finding } from './run/findings.ts'
 import type { Texts } from './run/review.ts'
 
-const LEVEL: Record<string, string> = { critical: 'Critical', important: 'Important', minor: 'Minor' }
 const HOTSPOT = 'узкое место гайда'
 const HOTSPOT_HEADER = /^\[g\d+ · узкое место гайда\]$/
-const HEADER = /^\[(?<id>[^\s·\]]+) · (?:Critical|Important|Minor)(?: · \d{1,3}%)?(?: · [^\]]*)?\]$/
+const HEADER = /^\[(?<id>[^\s·\]]+) · (?:Блокирует · [a-z]+|Не блокирует)(?: · \d{1,3}%)?(?: · [^\]]*)?\]$/
 const FILE_HEADING = /^## (?!#)(\S.*)$/
 const LINE_HEADING = /^### Line (\d+)(?:-\d+)? \((new|old)\)$/
 const START = '# Code Review Feedback'
@@ -25,7 +24,8 @@ export interface ParsedItem {
 }
 
 function header(item: Finding): string {
-  return `[${item.id} · ${LEVEL[item.severity]}${item.confidence === undefined ? '' : ` · ${item.confidence}%`}${item.mark ? ` · ${item.mark}` : ''}]`
+  const level = item.severity === 'blocking' ? `Блокирует · ${item.category ?? 'regression'}` : 'Не блокирует'
+  return `[${item.id} · ${level}${item.confidence === undefined ? '' : ` · ${item.confidence}%`}${item.mark ? ` · ${item.mark}` : ''}]`
 }
 
 export function annotations(findings: Finding[], texts: Texts): { source: string; annotations: Array<{ source: string; filePath: string; lineStart: number; lineEnd: number; text: string }> } {
@@ -151,7 +151,7 @@ export function reconcile(decision: Decision, parsed: { items: ParsedItem[]; gen
       continue
     }
     const id = `h${extra.length + 1}`
-    extra.push({ id, file: item.file, line: item.line ?? 0, severity: 'minor', confidence: 100, problem: text })
+    extra.push({ id, file: item.file, line: item.line ?? 0, severity: 'blocking', confidence: 100, problem: text })
     comments[id] = text
   }
   const summary = body.filter(Boolean).join('\n\n')

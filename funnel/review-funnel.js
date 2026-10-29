@@ -40,9 +40,17 @@ const FINDINGS = {
           },
           "severity": {
             "enum": [
-              "critical",
-              "important",
-              "minor"
+              "blocking",
+              "non-blocking"
+            ]
+          },
+          "category": {
+            "enum": [
+              "regression",
+              "goal",
+              "architecture",
+              "security",
+              "rule"
             ]
           },
           "confidence": {
@@ -114,7 +122,8 @@ const VERDICTS = {
           thread: { type: 'string' },
           evidence: { type: 'string' },
           duplicateOf: { type: 'string' },
-          severity: { enum: ['critical', 'important', 'minor'] },
+          severity: { enum: ['blocking', 'non-blocking'] },
+          category: { enum: ['regression', 'goal', 'architecture', 'security', 'rule'] },
           confidence: { type: 'integer', minimum: 0, maximum: 100 },
         },
       },

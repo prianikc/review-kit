@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { annotations, decisionOf, fixResult, hotspotAnnotations, parseMessage, reconcile, similarity } from './plannotator.ts'
 import type { Finding } from './run/findings.ts'
 
-const A1: Finding = { id: 'A-1', file: 'src/a.ts', line: 3, severity: 'important', confidence: 90, problem: 'p', mark: 'средняя вероятность' }
-const B1: Finding = { id: 'B-1', file: 'src/a.ts', line: 7, severity: 'minor', confidence: 88, problem: 'p' }
+const A1: Finding = { id: 'A-1', role: 'correctness', file: 'src/a.ts', line: 3, severity: 'blocking', category: 'regression', confidence: 90, problem: 'p', mark: 'средняя вероятность' }
+const B1: Finding = { id: 'B-1', role: 'quality', file: 'src/a.ts', line: 7, severity: 'non-blocking', confidence: 88, problem: 'p' }
 const TEXTS = { summary: 'Итог', comments: { 'A-1': 'Тут null не проверен', 'B-1': 'Имя не по правилу' } }
 const MESSAGE = [
   'Общая мысль',
@@ -12,7 +12,7 @@ const MESSAGE = [
   'Ещё про весь PR',
   '## src/a.ts',
   '### Line 3 (new)',
-  '[A-1 · Important · 90% · средняя вероятность]',
+  '[A-1 · Блокирует · regression · 90% · средняя вероятность]',
   'Тут null не проверен — перепишите',
   '### Line 7 (new)',
   'Имя не по правилу проекта',
@@ -30,7 +30,8 @@ const MESSAGE = [
 
 test('annotations: заголовок [id · уровень · уверенность · метка] и текст', () => {
   const body = annotations([A1], TEXTS)
-  assert.deepEqual(body.annotations[0], { source: 'review-kit', filePath: 'src/a.ts', lineStart: 3, lineEnd: 3, text: '[A-1 · Important · 90% · средняя вероятность]\nТут null не проверен' })
+  assert.deepEqual(body.annotations[0], { source: 'review-kit', filePath: 'src/a.ts', lineStart: 3, lineEnd: 3, text: '[A-1 · Блокирует · regression · 90% · средняя вероятность]\nТут null не проверен' })
+  assert.equal(annotations([B1], TEXTS).annotations[0].text, '[B-1 · Не блокирует · 88%]\nИмя не по правилу')
   assert.throws(() => annotations([B1], { comments: {} }), /нет текста для: B-1/)
 })
 
@@ -52,6 +53,7 @@ test('reconcile: по заголовку, по строке и похожест�
   assert.deepEqual(result.ids, ['A-1', 'B-1', 'h1'])
   assert.equal(result.texts.comments['A-1'], 'Тут null не проверен — перепишите')
   assert.equal(result.findings.at(-1)?.id, 'h1')
+  assert.deepEqual([result.findings.at(-1)?.severity, result.findings.at(-1)?.role], ['blocking', undefined])
   assert.equal(result.texts.summary, 'Ещё про весь PR\n\n- src/a.ts:2 (до изменения) — Про удалённую строку\n\n- src/a.ts — Про файл целиком')
 })
 
