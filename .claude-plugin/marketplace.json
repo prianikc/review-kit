@@ -2,5 +2,5 @@
   "name": "review-kit",
   "owner": { "name": "prianikc" },
   "description": "review-kit — плагин Claude Code для работы с pull request'ами",
-  "plugins": [{ "name": "review-kit", "source": ".", "description": "Ревью PR агентами, разбор замечаний, раунд правок, перепроверка" }]
+  "plugins": [{ "name": "review-kit", "source": ".", "description": "Ревью PR агентами с учётом истории, разбор замечаний, раунд правок" }]
 }
