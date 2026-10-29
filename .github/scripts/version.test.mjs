@@ -1,16 +1,27 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { versionProblem } from './version.mjs'
+import { bump, levelOf, manualBumpProblem, pluginChanged } from './version.mjs'
 
-test('versionProblem: файлы плагина — нужна большая версия; только документы — не нужна', () => {
-  assert.equal(versionProblem({ changed: ['README.md', 'docs/a.md'], before: '6.0.0', after: '6.0.0' }), null)
-  assert.equal(versionProblem({ changed: ['mod/git.ts'], before: '6.0.0', after: '6.0.1' }), null)
-  assert.equal(versionProblem({ changed: ['mod/git.ts'], before: '6.0.0', after: '6.0.0' }), 'изменены файлы плагина (mod/git.ts), а version осталась 6.0.0 — поднимите в .claude-plugin/plugin.json')
-  assert.match(versionProblem({ changed: ['skills/x/SKILL.md'], before: '6.10.0', after: '6.9.9' }), /6\.9\.9 не больше 6\.10\.0/)
-  assert.match(versionProblem({ changed: ['agents/a.md'], before: '6.0.0', after: 'abc' }), /не semver/)
+test('levelOf: major > minor > patch, посторонние метки не в счёт', () => {
+  assert.equal(levelOf(['bug', 'minor', 'major']), 'major')
+  assert.equal(levelOf(['minor']), 'minor')
+  assert.equal(levelOf(['documentation']), 'patch')
+  assert.equal(levelOf([]), 'patch')
 })
 
-test('versionProblem: много файлов — первые три и «и ещё N»', () => {
-  const changed = ['mod/a.ts', 'mod/b.ts', 'mod/c.ts', 'mod/d.ts', 'mod/e.ts']
-  assert.match(versionProblem({ changed, before: '1.0.0', after: '1.0.0' }), /\(mod\/a\.ts, mod\/b\.ts, mod\/c\.ts и ещё 2\)/)
+test('bump: patch / minor / major обнуляют младшие; не semver — ошибка', () => {
+  assert.equal(bump('7.0.2', 'patch'), '7.0.3')
+  assert.equal(bump('7.0.2', 'minor'), '7.1.0')
+  assert.equal(bump('7.9.9', 'major'), '8.0.0')
+  assert.throws(() => bump('abc', 'patch'), /не semver/)
+})
+
+test('pluginChanged: файлы плагина — да; документы и .github — нет', () => {
+  assert.equal(pluginChanged(['mod/git.ts', 'README.md']), true)
+  assert.equal(pluginChanged(['README.md', 'docs/a.md', '.github/workflows/ci.yml']), false)
+})
+
+test('manualBumpProblem: версия в PR не меняется', () => {
+  assert.equal(manualBumpProblem({ before: '7.0.2', after: '7.0.2' }), null)
+  assert.match(manualBumpProblem({ before: '7.0.2', after: '7.1.0' }), /version поднимает GitHub Actions при слиянии/)
 })
