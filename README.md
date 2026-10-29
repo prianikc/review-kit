@@ -29,6 +29,8 @@ claude plugin marketplace update review-kit
 claude plugin update review-kit@review-kit
 ```
 
+Что вошло в каждую версию — в [Releases](https://github.com/prianikc/review-kit/releases).
+
 ## Команды
 
 Git-команды общего назначения (`/commit`, `/push`, `/merge`, `/gsync`, `/main`, `/confl` без номера) переехали в

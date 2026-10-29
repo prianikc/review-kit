@@ -58,12 +58,14 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 
 - Тесты: `node --test 'mod/**/*.test.ts' '.github/scripts/*.test.mjs'` (без зависимостей и компилятора). Валидация:
   `claude plugin validate .`.
-- CI (`.github/workflows/ci.yml`) на PR и пуш в `main`: тесты, `claude plugin validate`, поднятие `version`.
+- CI (`.github/workflows/ci.yml`) на PR и пуш в `main`: тесты, `claude plugin validate`, `version` в PR не тронута руками.
 - Локально: из тестового проекта `claude --plugin-dir <путь к клону review-kit>`, токен `FORGEJO_TOKEN` в окружении.
   Проверять явными `/pr…` командами — глобальные плагины могут перехватить «посмотри PR».
 
 ## Git
 
 - https://github.com/prianikc/review-kit, ветка `main`.
-- Каждый пуш в `main`, меняющий плагин, поднимает `version` в `.claude-plugin/plugin.json` (patch — исправление,
-  minor — новое поведение), иначе установленный плагин не обновится. CI это проверяет.
+- `version` в `.claude-plugin/plugin.json` поднимает GitHub Actions при слиянии PR в `main`
+  (`.github/workflows/release.yml`), если PR менял файлы плагина: метка PR `major` или `minor`, без метки — patch;
+  коммит бота в `main`, тег `vX.Y.Z` и Release. В PR `version` руками не меняется — CI проверяет. Без новой версии
+  установленный плагин не обновится.

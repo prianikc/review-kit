@@ -20,5 +20,6 @@ jobs:
         run: node --test 'mod/**/*.test.ts' '.github/scripts/*.test.mjs'
       - name: Валидация плагина
         run: npx -y @anthropic-ai/claude-code plugin validate .
-      - name: Версия поднята
-        run: node .github/scripts/check-version.mjs "${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD^1' }}"
+      - name: Версию не трогали руками
+        if: github.event_name == 'pull_request'
+        run: node .github/scripts/no-manual-version.mjs "origin/${{ github.base_ref }}"
