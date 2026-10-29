@@ -1,5 +1,4 @@
 import { update, type Register, type EngineInterface, type HookStream, type ProcessSpawnChunk, type ProcessSpawnResult } from 'claude-code'
-import { allowsManualCommit, classifyBash, guardText, opensCommitWindow } from './policy.ts'
 import { manifestPaths, MAX_RETURNS, parseManifest, parseRole, unreadFiles, type GatedAgent } from './gate.ts'
 import { ADAPTERS, createProvider, selectProvider, withTimeout, type ExplicitConfig } from './forge/index.ts'
 import type { ForgeProvider } from './forge/types.ts'
@@ -17,8 +16,6 @@ import { APPROVABLE, buildDraft, buildReplies, chosenVerdict, openThreads, parse
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
-const COMMIT_PENDING = { plugin: 'review-kit', key: 'commitPending' } as const
-const COMMIT_TURN = { plugin: 'review-kit', key: 'commitTurn' } as const
 const CONFIRM_TEXT_LIMIT = 6000
 const HTTP_TIMEOUT_MS = 30_000
 const CONFIG_PATH = '.claude/review-kit.local.json'
@@ -171,16 +168,6 @@ async function roadmapDir($: EngineInterface): Promise<string> {
     return typeof dir === 'string' && dir.trim() ? dir.trim().replace(/\/+$/, '') : ROADMAP_DIR
   } catch {
     return ROADMAP_DIR
-  }
-}
-
-async function manualCommitCommands($: EngineInterface): Promise<string[]> {
-  const text = await $.fs.read(`${await projectRoot($)}/${CONFIG_PATH}`).then(String, () => '')
-  try {
-    const list = text ? (JSON.parse(text) as { manualCommitCommands?: unknown }).manualCommitCommands : undefined
-    return Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string' && item.trim() !== '') : []
-  } catch {
-    return []
   }
 }
 
@@ -1455,36 +1442,6 @@ export const register: Register = (on, options) => {
       return { result: `unavailable: ${(error as Error).message}` }
     }
   }).catch(() => ({ result: 'unavailable: review_plannotator не выполнен' }))
-
-  for (const tool of ['Bash', 'Monitor']) {
-    on('tool.call', { tool }, async ($, e, next) => {
-      if ((await activeRun($)) === undefined) return next(e)
-      const command = String((e as { command?: string }).command ?? '')
-      const commitTurn = (await $.state.get(COMMIT_TURN)).value === true
-      if (allowsManualCommit(command, commitTurn, (e as { agentId?: string }).agentId)) return next(e)
-      const deny = guardText(classifyBash(command))
-      return deny ? { deny } : next(e)
-    }).catch(($, e, next) => (next.called ? next(e) : { deny: GUARD_FAILED }))
-  }
-
-  on('prompt.submit', async ($, e, next) => {
-    const result = await next(e)
-    if (!e.isMeta && !('drop' in result)) await $.state.set(COMMIT_PENDING, opensCommitWindow(e.command?.name, e.origin?.kind, await manualCommitCommands($)))
-    return result
-  }).catch(($, e, next) => next(e))
-
-  on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) {
-      await $.state.set(COMMIT_TURN, (await $.state.get(COMMIT_PENDING)).value === true)
-      await $.state.set(COMMIT_PENDING, false)
-    }
-    return next(e)
-  }).catch(($, e, next) => next(e))
-
-  on('turn.complete', async ($, e, next) => {
-    if (e.agentId === undefined) await $.state.set(COMMIT_TURN, false)
-    return next(e)
-  }).catch(($, e, next) => next(e))
 
   on('agent.spawn', async ($, e, next) => {
     const role = parseRole(e.prompt)

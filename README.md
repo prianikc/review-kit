@@ -32,8 +32,7 @@ claude plugin update review-kit@review-kit
 ## Команды
 
 Git-команды общего назначения (`/commit`, `/push`, `/merge`, `/gsync`, `/main`, `/confl` без номера) переехали в
-[dev-kit](https://github.com/prianikc/dev-kit). Чтобы `/commit` из dev-kit работал внутри прогона, в
-`.claude/review-kit.local.json` добавьте `"manualCommitCommands": ["dev-kit:commit"]` (dev-kit предложит сам).
+[dev-kit](https://github.com/prianikc/dev-kit).
 
 | Команда | Что делает |
 |---|---|
