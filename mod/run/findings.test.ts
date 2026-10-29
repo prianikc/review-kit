@@ -81,13 +81,13 @@ test('normalize: типографика, ё, маркеры списков, ра
 
 test('finishTriage: класс, fixed только у valid, пропуски', () => {
   const answers = { items: [{ id: 'a', class: 'valid', reason: 'r', fixed: true, evidence: 'e' }, { id: 'b', class: 'invalid', reason: 'r', fixed: true }, { id: 'c', class: 'closed', reason: 'r' }] }
-  assert.deepEqual(finishTriage(answers, [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }], 'feedback'), [
+  assert.deepEqual(finishTriage(answers, [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]), [
     { id: 'a', class: 'valid', reason: 'r', fixed: true, evidence: 'e' },
     { id: 'b', class: 'invalid', reason: 'r' },
     { id: 'c', class: 'question', reason: 'агент D не дал ответа по этому пункту' },
     { id: 'd', class: 'question', reason: 'агент D не дал ответа по этому пункту' },
   ])
-  assert.equal(finishTriage({ result: { items: [] } }, [{ id: 'x' }], 'recheck')[0].class, 'unknown')
+  assert.equal(finishTriage({ result: { items: [] } }, [{ id: 'x' }])[0].class, 'question')
 })
 
 test('«Не проверялось»: удалённый в PR файл не попадает, строка агента о файле, про который сказал мод, — одна', () => {
@@ -141,11 +141,6 @@ test('unconfirmed: опровергнутые и отброшенные — с �
   assert.deepEqual(reviewPool(result).map(f => [f.id, f.mark ?? '']), [['B-2', ''], ['A-1', 'опровергнуто'], ['A-2', 'отброшено: file-not-in-diff'], ['B-1', 'отброшено: below-threshold:confirmed:non-blocking:40']])
 })
 
-test('finishTriage: в перепроверке класс answered принимается, accepted от агента — нет', () => {
-  const answers = { items: [{ id: 'a', class: 'answered', reason: 'проверка выше' }, { id: 'b', class: 'accepted', reason: 'x' }] }
-  assert.deepEqual(finishTriage(answers, [{ id: 'a' }, { id: 'b' }], 'recheck').map(item => item.class), ['answered', 'unknown'])
-})
-
 const THREADS = [
   { id: 'T1', place: 'src/a.ts:3', status: 'open' as const, last: 'мы' as const, commentIds: ['c1'] },
   { id: 'T2', place: 'src/a.ts:8', status: 'open' as const, last: 'автор' as const, lastAuthorReply: 'вынесено в #205', commentIds: ['c2', 'c3'] },
@@ -187,8 +182,8 @@ test('C: closed с тредом → «закрыто в обсуждении»; 
   assert.deepEqual(result.belowBar.map(f => [f.id, f.mark]), [['A-2', 'C не проверил']])
 })
 
-test('finishTriage: в разборе своего PR класс todo принимается, в перепроверке — нет', () => {
+test('finishTriage: класс todo принимается, класс перепроверки — нет', () => {
   const answers = { items: [{ id: 'a', class: 'todo', reason: 'не блокирует' }] }
-  assert.equal(finishTriage(answers, [{ id: 'a' }], 'feedback')[0].class, 'todo')
-  assert.equal(finishTriage(answers, [{ id: 'a' }], 'recheck')[0].class, 'unknown')
+  assert.equal(finishTriage(answers, [{ id: 'a' }])[0].class, 'todo')
+  assert.equal(finishTriage({ items: [{ id: 'a', class: 'answered', reason: 'r' }] }, [{ id: 'a' }])[0].class, 'question')
 })

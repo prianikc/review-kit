@@ -30,16 +30,6 @@ test('prSource: пометка о базе ревью — в notes', () => {
   assert.deepEqual(prSource(pull(), { base: 'b', head: 'h', baseFallback: false, baseNote: 'влит main' }).notes, ['влит main'])
 })
 
-test('prSource: перепроверка — дельта после моего ревью; полный режим — весь PR с пометкой', () => {
-  const delta = prSource(pull(), { base: 'r', head: 'h', baseFallback: false, recheck: { mode: 'delta' } })
-  assert.equal(delta.key, 'pr-7-delta')
-  assert.match(delta.heading, / · изменения после моего ревью$/)
-  assert.deepEqual(delta.notes, [])
-  const full = prSource(pull(), { base: 'b', head: 'h', baseFallback: false, recheck: { mode: 'full', note: 'после rebase' } })
-  assert.equal(full.key, 'pr-7')
-  assert.deepEqual(full.notes, ['после rebase'])
-})
-
 test('commitSource + guideText: сообщение, stat и diff коммита от родителя', async () => {
   const r = repo()
   r.commit('a.txt', '1\n', 'base')

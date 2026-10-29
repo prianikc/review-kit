@@ -1,7 +1,7 @@
 # review-kit
 
 Плагин Claude Code для работы с pull request'ами: ревью чужих PR воронкой агентов, разбор замечаний к своему PR, раунд
-правок, перепроверка после своего ревью. Хостинг подключается адаптером; сейчас есть только Forgejo/Gitea.
+правок; повторное ревью учитывает историю — прошлые замечания и ответы автора. Хостинг подключается адаптером; сейчас есть только Forgejo/Gitea.
 
 POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в `.claude-plugin/plugin.json`.
 
@@ -21,7 +21,7 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 | `mod/gate.ts` | gate чтения манифеста агентами |
 | `funnel/` | Workflow-скрипты: `review-funnel.js` (A/B → C), `triage.js` (D) |
 | `agents/` | `correctness` (A), `quality` (B), `refuter` (C), `triage` (D) |
-| `skills/` | `guide`, `pr-flow`, `pr-review-run`, `pr-feedback-run`, `pr-fix-run`, `pr-recheck-run`, `pr-tab`, `pr-confl` |
+| `skills/` | `guide`, `pr-flow`, `pr-review-run`, `pr-feedback-run`, `pr-fix-run`, `pr-tab`, `pr-confl` |
 | `config/funnel.json` | пороги воронки |
 
 Рабочие файлы прогона в целевом проекте — `.review-kit/run/<N>/`.

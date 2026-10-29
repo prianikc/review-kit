@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, undecidedAnswers, verdictName } from './review.ts'
+import { buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, verdictName } from './review.ts'
 import { MARKER } from '../status.ts'
 import type { Finding } from './findings.ts'
 import type { DiscussionThread } from './discussion.ts'
@@ -10,20 +10,15 @@ const f = (id: string, severity: Finding['severity'], line = 3): Finding => ({ i
 const CAPS = { inline: true, requestChanges: true }
 const COVERED = new Map([['a.ts', new Set([3, 4])]])
 
-test('verdictName: блокирующая — запрос изменений; только неблокирующие — одобрение с комментариями; прошлое неблокирующее не поднимает', () => {
-  assert.equal(verdictName([f('A-1', 'blocking')]), 'Changes requested')
+test('verdictName: блокирующая — запрос изменений; только неблокирующие — одобрение с комментариями; ничего — одобрение', () => {
   assert.equal(verdictName([f('A-1', 'blocking')]), 'Changes requested')
   assert.equal(verdictName([f('A-1', 'non-blocking')]), 'Approved with comments')
   assert.equal(verdictName([]), 'Approved')
-  assert.equal(verdictName([], [{ class: 'partial' }]), 'Changes requested')
-  assert.equal(verdictName([], [{ class: 'closed' }]), 'Approved')
-  assert.equal(verdictName([], [{ class: 'open', blocking: false }]), 'Approved')
 })
 
-test('chosenVerdict: явный вердикт пользователя сильнее находок и статусов; решение Plannotator; иначе по находкам и статусам', () => {
-  const partial = [{ class: 'partial' }]
-  assert.equal(chosenVerdict({ selected: [], statuses: partial }), 'Approved')
-  assert.equal(chosenVerdict({ selected: [], statuses: partial, verdict: 'approve' }), 'Approved')
+test('chosenVerdict: явный вердикт пользователя сильнее находок; решение Plannotator; иначе только по выбранным находкам', () => {
+  assert.equal(chosenVerdict({ selected: [] }), 'Approved')
+  assert.equal(chosenVerdict({ selected: [f('A-1', 'non-blocking')] }), 'Approved with comments')
   assert.equal(chosenVerdict({ selected: [f('A-1', 'blocking')], verdict: 'approve' }), 'Approved with comments')
   assert.equal(chosenVerdict({ selected: [f('A-1', 'non-blocking')], verdict: 'request-changes' }), 'Changes requested')
   assert.equal(chosenVerdict({ selected: [], decision: 'approved' }), 'Approved')
@@ -31,8 +26,8 @@ test('chosenVerdict: явный вердикт пользователя силь
   assert.equal(chosenVerdict({ selected: [f('A-1', 'blocking')] }), 'Changes requested')
 })
 
-test('buildDraft: явное одобрение при открытых прошлых замечаниях без выбранных находок — голое одобрение', () => {
-  const { draft } = buildDraft({ selected: [], texts: { summary: 'Прошлые замечания: закрыто 0, не закрыто 0, частично 1.', comments: {} }, verdict: chosenVerdict({ selected: [], statuses: [{ class: 'partial' }], verdict: 'approve' }), approve: true, covered: COVERED, capabilities: CAPS })
+test('buildDraft: явное одобрение без выбранных находок — голое одобрение', () => {
+  const { draft } = buildDraft({ selected: [], texts: { summary: 'Итог', comments: {} }, verdict: chosenVerdict({ selected: [], verdict: 'approve' }), approve: true, covered: COVERED, capabilities: CAPS })
   assert.deepEqual(draft, { verdict: 'approve', body: '', comments: [] })
 })
 
@@ -57,13 +52,13 @@ test('buildDraft: одобрение без находок — без тела �
   assert.equal(buildDraft({ selected: [f('A-1', 'non-blocking')], texts: { summary: 'Итог', comments: { 'A-1': 'x' } }, verdict: 'Approved with comments', approve: true, covered: COVERED, capabilities: CAPS }).draft.body, 'Итог')
 })
 
-test('chosenVerdict: без содержания запроса изменений нет — вычисленный становится одобрением, явный — ошибка', () => {
-  assert.equal(chosenVerdict({ selected: [], statuses: [{ class: 'partial' }] }), 'Approved')
-  assert.equal(chosenVerdict({ selected: [], openThreads: 2 }), 'Approved')
+test('chosenVerdict: только по выбранным находкам — открытые треды и прошлые замечания вердикт не поднимают; без содержания запроса изменений нет', () => {
+  assert.equal(chosenVerdict({ selected: [f('A-1', 'non-blocking')] }), 'Approved with comments')
+  assert.equal(chosenVerdict({ selected: [f('A-1', 'blocking')] }), 'Changes requested')
+  assert.equal(chosenVerdict({ selected: [] }), 'Approved')
   assert.throws(() => chosenVerdict({ selected: [], verdict: 'request-changes' }), /запрос изменений без комментариев не отправляется/)
   assert.throws(() => chosenVerdict({ selected: [], decision: 'annotated' }), /запрос изменений без комментариев не отправляется/)
-  assert.equal(chosenVerdict({ selected: [], statuses: [{ class: 'partial' }], content: 1 }), 'Changes requested')
-  assert.equal(chosenVerdict({ selected: [f('A-1', 'non-blocking')], openThreads: 1 }), 'Changes requested')
+  assert.equal(chosenVerdict({ selected: [], decision: 'annotated', content: 1 }), 'Changes requested')
 })
 
 test('buildDraft: request changes с пустым телом — «Нужны правки.», с комментариями к строкам и без (Forgejo требует тело)', () => {
@@ -89,12 +84,6 @@ test('buildDraft: нет текста для находки — ошибка', (
   assert.throws(() => buildDraft({ selected: [f('A-1', 'non-blocking')], texts: { comments: {} }, verdict: 'Approved with comments', approve: false, covered: COVERED, capabilities: CAPS }), /нет текста для: A-1/)
 })
 
-test('ответ автора: answered без решения — нерешён и требует правок; принятый — закрыт', () => {
-  assert.equal(verdictName([], [{ class: 'answered' }]), 'Changes requested')
-  assert.equal(verdictName([], [{ class: 'accepted' }]), 'Approved')
-  assert.deepEqual(undecidedAnswers([{ id: 'r/1', class: 'answered' }, { id: 'r/2', class: 'accepted' }]), ['r/1'])
-})
-
 test('buildReplies: тред/общий, цитата — первая строка до 200, маркер, пустые пропускаются, неизвестный id — ошибка', () => {
   const items: IntakeItem[] = [
     { id: 'r1/c1', kind: 'thread', reviewId: 'r1', threadId: 'r1:a.ts:3', path: 'a.ts', position: 3, commitId: 'h', author: 'carol', quote: 'carol: x', stale: false, disagree: false },
@@ -105,26 +94,6 @@ test('buildReplies: тред/общий, цитата — первая стро�
   assert.equal(replies[1].quote, 'я'.repeat(200))
   assert.equal(buildReplies(items, { 'r1/c1': '   ' }).length, 0)
   assert.throws(() => buildReplies(items, { nope: 'x' }), /нет пункта для ответа: nope/)
-})
-
-test('chosenVerdict: открытый тред не даёт одобрить, если есть что отправить; явный вердикт и Plannotator сильнее', () => {
-  assert.equal(chosenVerdict({ selected: [], openThreads: 1 }), 'Approved')
-  assert.equal(chosenVerdict({ selected: [f('A-1', 'non-blocking')], openThreads: 2 }), 'Changes requested')
-  assert.equal(chosenVerdict({ selected: [f('A-1', 'blocking')], openThreads: 1 }), 'Changes requested')
-  assert.equal(chosenVerdict({ selected: [], openThreads: 1, verdict: 'approve' }), 'Approved')
-  assert.equal(chosenVerdict({ selected: [], openThreads: 1, decision: 'approved' }), 'Approved')
-  assert.equal(chosenVerdict({ selected: [], openThreads: 0 }), 'Approved')
-})
-
-test('openThreads: открытые треды без тех, что перепроверка закрыла', () => {
-  const threads = [
-    { id: 'T1', place: 'a.ts:1', status: 'open' as const, last: 'автор' as const, commentIds: ['c1', 'c2'] },
-    { id: 'T2', place: 'a.ts:5', status: 'open' as const, last: 'мы' as const, commentIds: ['c3'] },
-    { id: 'T3', place: 'a.ts:9', status: 'resolved' as const, last: 'мы' as const, commentIds: ['c4'] },
-  ]
-  assert.deepEqual(openThreads(threads), ['T1', 'T2'])
-  assert.deepEqual(openThreads(threads, [{ id: 'r1/c1', class: 'closed' }, { id: 'r1/c3', class: 'open' }]), ['T2'])
-  assert.deepEqual(openThreads(threads, [{ id: 'r1/c3', class: 'accepted' }]), ['T1'])
 })
 
 test('buildDraft: неблокирующая в строке — с префиксом TODO; находка человека (без role) — как есть', () => {

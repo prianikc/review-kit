@@ -9,13 +9,12 @@ const SEVERITY_RANK: Record<Severity, number> = { blocking: 2, 'non-blocking': 1
 export const CATEGORIES: readonly Category[] = ['regression', 'goal', 'architecture', 'security', 'rule']
 const MIN_QUOTE_WORDS = 6
 const MIN_QUOTE_CHARS = 30
-const CLASSES: Record<TriageMode, string[]> = { feedback: ['valid', 'todo', 'invalid', 'question', 'out-of-scope'], recheck: ['closed', 'open', 'partial', 'answered'] }
-const FALLBACK: Record<TriageMode, string> = { feedback: 'question', recheck: 'unknown' }
+const CLASSES = ['valid', 'todo', 'invalid', 'question', 'out-of-scope']
+const FALLBACK = 'question'
 const TYPOGRAPHY: Record<string, string> = { '—': '-', '–': '-', '«': '"', '»': '"', '“': '"', '”': '"', '„': '"', 'ё': 'е', 'Ё': 'Е' }
 
 export type Severity = 'blocking' | 'non-blocking'
 export type Category = 'regression' | 'goal' | 'architecture' | 'security' | 'rule'
-export type TriageMode = 'feedback' | 'recheck'
 
 export interface Finding {
   id: string
@@ -292,14 +291,14 @@ export function collectFindings(input: { raw: unknown; changed: string[]; lineCo
   return { findings, belowBar: below, dropped: [...invalid, ...belowDropped, ...foldDropped, ...minDropped], unconfirmed: [...lost, ...belowLost, ...minLost], notChecked: [...new Set(notes)] }
 }
 
-export function finishTriage(raw: unknown, items: Array<{ id: string }>, mode: TriageMode): TriageAnswer[] {
+export function finishTriage(raw: unknown, items: Array<{ id: string }>): TriageAnswer[] {
   const box = raw as { result?: unknown; items?: unknown } | null
   const answer = (box?.result && typeof box.result === 'object' ? box.result : box) as { items?: Array<Record<string, unknown>> } | null
   const answers = new Map((answer?.items ?? []).filter(a => a && typeof a === 'object').map(a => [a.id as string, a]))
   return items.map(item => {
     const found = answers.get(item.id)
     const cls = found?.class
-    if (typeof cls !== 'string' || !CLASSES[mode].includes(cls)) return { id: item.id, class: FALLBACK[mode], reason: 'агент D не дал ответа по этому пункту' }
+    if (typeof cls !== 'string' || !CLASSES.includes(cls)) return { id: item.id, class: FALLBACK, reason: 'агент D не дал ответа по этому пункту' }
     return {
       id: item.id, class: cls, reason: typeof found?.reason === 'string' ? found.reason : '',
       ...(cls === 'valid' && found?.fixed === true ? { fixed: true as const } : {}),

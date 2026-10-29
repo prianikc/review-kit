@@ -158,12 +158,12 @@ function refuterPrompt(findings) {
 }
 
 function refute(findings) {
-  return agent(refuterPrompt(findings), { agentType: 'review-kit:refuter', schema: VERDICTS, model: args.model, label: 'C refuter', phase: 'Опровержение' })
+  return agent(refuterPrompt(findings), { agentType: 'review-kit:refuter', schema: VERDICTS, label: 'C refuter', phase: 'Опровержение' })
 }
 
 phase('Поиск')
 const answers = await parallel(args.roles.map(role => () =>
-  agent(header(role), { agentType: `review-kit:${role}`, schema: FINDINGS, model: args.model, label: `${PREFIX[role]} ${role}`, phase: 'Поиск' })))
+  agent(header(role), { agentType: `review-kit:${role}`, schema: FINDINGS, label: `${PREFIX[role]} ${role}`, phase: 'Поиск' })))
 const failed = args.roles.filter((_, index) => !answers[index])
 const findings = answers.flatMap((answer, index) => (answer ? tagged(args.roles[index], answer) : []))
 const notChecked = [...new Set(answers.flatMap(answer => answer?.notChecked ?? []))]

@@ -1,27 +1,10 @@
 import type { PullRequest } from './forge/types.ts'
 
 export const FULL_NOTE = 'после rebase/force-push моего ревью нет в истории — проверено всё от базы PR'
-const SYNTHETIC_MESSAGE = 'review-kit: база перепроверки — моё ревью плюс влитая база'
 const SYNTHETIC_REVIEW_MESSAGE = 'review-kit: база ревью — базовая ветка плюс влитый main'
 const SYNTHETIC_IDENTITY = { GIT_AUTHOR_NAME: 'review-kit', GIT_AUTHOR_EMAIL: 'review-kit@localhost', GIT_COMMITTER_NAME: 'review-kit', GIT_COMMITTER_EMAIL: 'review-kit@localhost' }
 
 export type Run = (argv: readonly string[], init?: { cwd?: string; env?: Record<string, string>; stdin?: string }) => Promise<{ exitCode: number; stdout: string; stderr: string }>
-
-export async function recheckBase(run: Run, { lastCommit, head, baseRef }: { lastCommit: string; head: string; baseRef: string }): Promise<{ base: string; mode: 'delta' | 'full'; note?: string; scope?: string }> {
-  const primary = await run(['git', 'merge-base', `origin/${baseRef}`, head])
-  const merge = primary.exitCode === 0 ? primary : await run(['git', 'merge-base', 'origin/main', head])
-  if ((await run(['git', 'merge-base', '--is-ancestor', lastCommit, head])).exitCode !== 0) {
-    if (merge.exitCode !== 0) throw new Error(`не найдена база перепроверки: нет ни origin/${baseRef}, ни origin/main`)
-    return { base: merge.stdout.trim(), mode: 'full', note: FULL_NOTE }
-  }
-  const merges = merge.exitCode === 0 ? (await gitText(run, ['rev-list', '--merges', `${lastCommit}..${head}`])).trim() : ''
-  const newBase = merge.stdout.trim()
-  if (!merges || (await run(['git', 'merge-base', '--is-ancestor', newBase, lastCommit])).exitCode === 0) return { base: lastCommit, mode: 'delta' }
-  const tree = await run(['git', 'merge-tree', '--write-tree', lastCommit, newBase])
-  if (tree.exitCode > 1) return { base: newBase, mode: 'full', note: `база PR влита после ревью, а дельту без неё собрать не удалось (${tree.stderr.trim()}) — проверено всё от базы PR` }
-  const synthetic = await gitText(run, ['commit-tree', tree.stdout.split('\n')[0], '-p', lastCommit, '-p', newBase, '-m', SYNTHETIC_MESSAGE], { env: SYNTHETIC_IDENTITY })
-  return { base: synthetic.trim(), mode: 'delta', scope: newBase, note: `автор влил ${baseRef} после ревью — изменения из ${baseRef} в дельту не входят` }
-}
 
 export async function gitText(run: Run, args: string[], init?: { env?: Record<string, string> }): Promise<string> {
   const result = await run(['git', '-c', 'core.quotePath=false', ...args], init)
