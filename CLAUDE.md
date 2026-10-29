@@ -52,7 +52,9 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 
 ## Проверка и запуск
 
-- Тесты: `node --test 'mod/**/*.test.ts'` (без зависимостей и компилятора). Валидация: `claude plugin validate .`.
+- Тесты: `node --test 'mod/**/*.test.ts' '.github/scripts/*.test.mjs'` (без зависимостей и компилятора). Валидация:
+  `claude plugin validate .`.
+- CI (`.github/workflows/ci.yml`) на PR и пуш в `main`: тесты, `claude plugin validate`, поднятие `version`.
 - Локально: из тестового проекта `claude --plugin-dir <путь к клону review-kit>`, токен `FORGEJO_TOKEN` в окружении.
   Проверять явными `/pr…` командами — глобальные плагины могут перехватить «посмотри PR».
 
@@ -60,4 +62,4 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 
 - https://github.com/prianikc/review-kit, ветка `main`.
 - Каждый пуш в `main`, меняющий плагин, поднимает `version` в `.claude-plugin/plugin.json` (patch — исправление,
-  minor — новое поведение), иначе установленный плагин не обновится.
+  minor — новое поведение), иначе установленный плагин не обновится. CI это проверяет.
