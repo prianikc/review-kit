@@ -6,8 +6,6 @@ import { NON_BLOCKING_PREFIX, type DiscussionThread } from './discussion.ts'
 export const APPROVABLE: readonly VerdictName[] = ['Approved', 'Approved with comments']
 const DEFAULT_CHANGES_BODY = 'Нужны правки.'
 const DEFAULT_EMPTY_BODY = 'Замечаний нет.'
-const UNRESOLVED = ['open', 'partial', 'answered']
-const SETTLED = ['closed', 'accepted']
 const EMPTY_CHANGES = 'запрос изменений без комментариев не отправляется — выберите находки или одобрите'
 const QUOTE_LIMIT = 200
 const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/
@@ -20,30 +18,22 @@ export interface Texts {
   comments: Record<string, string>
 }
 
-export function verdictName(findings: Array<{ severity: string }>, statuses: Array<{ class: string; blocking?: boolean }> = []): VerdictName {
-  const blocking = findings.some(item => item.severity === 'blocking') || statuses.some(s => UNRESOLVED.includes(s.class) && s.blocking !== false)
-  if (blocking) return 'Changes requested'
+export function verdictName(findings: Array<{ severity: string }>): VerdictName {
+  if (findings.some(item => item.severity === 'blocking')) return 'Changes requested'
   return findings.length ? 'Approved with comments' : 'Approved'
 }
 
-export function chosenVerdict({ selected, statuses = [], decision, verdict, openThreads = 0, content = selected.length }: { selected: Array<{ severity: string }>; statuses?: Array<{ class: string; blocking?: boolean }>; decision?: string; verdict?: ExplicitVerdict; openThreads?: number; content?: number }): VerdictName {
+export function chosenVerdict({ selected, decision, verdict, content = selected.length }: { selected: Array<{ severity: string }>; decision?: string; verdict?: ExplicitVerdict; content?: number }): VerdictName {
   if (verdict === 'approve' || decision === 'approved') return selected.length ? 'Approved with comments' : 'Approved'
   if (verdict === 'request-changes' || decision === 'annotated') {
     if (content === 0) throw new Error(EMPTY_CHANGES)
     return 'Changes requested'
   }
-  if (content === 0) return 'Approved'
-  const computed = verdictName(selected, statuses)
-  return openThreads > 0 && APPROVABLE.includes(computed) ? 'Changes requested' : computed
+  return content === 0 ? 'Approved' : verdictName(selected)
 }
 
-export function openThreads(threads: DiscussionThread[], statuses: Array<{ id: string; class: string }> = []): string[] {
-  const settled = new Set(statuses.filter(s => SETTLED.includes(s.class)).map(s => s.id.split('/').at(-1)))
-  return threads.filter(thread => thread.status === 'open' && !thread.nonBlocking && !thread.commentIds.some(id => settled.has(id))).map(thread => thread.id)
-}
-
-export function undecidedAnswers(statuses: Array<{ id: string; class: string }>): string[] {
-  return statuses.filter(s => s.class === 'answered').map(s => s.id)
+export function openThreads(threads: DiscussionThread[]): string[] {
+  return threads.filter(thread => thread.status === 'open' && !thread.nonBlocking).map(thread => thread.id)
 }
 
 export function parseCovered(diffU0: string): Map<string, Set<number>> {

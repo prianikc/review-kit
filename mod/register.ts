@@ -2,17 +2,17 @@ import { update, type Register, type EngineInterface, type HookStream, type Proc
 import { manifestPaths, MAX_RETURNS, parseManifest, parseRole, unreadFiles, type GatedAgent } from './gate.ts'
 import { ADAPTERS, createProvider, selectProvider, withTimeout, type ExplicitConfig } from './forge/index.ts'
 import type { ForgeProvider } from './forge/types.ts'
-import { ACTIONABLE, commentIds, contextOf, driftOf, placeAll, prListText, pullRows, splitHere, intakeItems, loadPr, priorComments, scenarioOf, type IntakeItem, type PrContext, type PrData, type PrSnapshot } from './status.ts'
+import { ACTIONABLE, commentIds, contextOf, driftOf, placeAll, prListText, pullRows, splitHere, intakeItems, loadPr, scenarioOf, type IntakeItem, type PrContext, type PrData, type PrSnapshot } from './status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, type TriageItem } from './run/input.ts'
 import { readRules } from './run/rules.ts'
 import { collectFindings, finishTriage, reviewPool, type Finding, type FindingsResult, type GateRow, type Severity, type ThresholdRow } from './run/findings.ts'
-import { applySwitch, fetchHead, reviewBase, createReviewWorktree, excludeFile, withExcluded, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, showFile, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, recheckBase, leftoverRuns, removeWorktrees, roundState, snapshot, stashAction, STASH_GONE, switchBack, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
+import { applySwitch, fetchHead, reviewBase, createReviewWorktree, excludeFile, withExcluded, shellQuote, changedFiles, claudeCodeChanges, commitMerge, commitRound, deleteBranches, isAncestor, mergeBase, mergeProblem, operationInProgress, unmergedPaths, foreignChanges, gitText, showFile, headShift, reviewed, holder as worktreeHolder, inMainTree, mainBranch, messageProblem, planSwitch, pushRound, leftoverRuns, removeWorktrees, roundState, snapshot, stashAction, STASH_GONE, switchBack, unpushed, worktreeCandidates, type IsActive, type Run, type SwitchPlan } from './git.ts'
 import { createdHandle, previewHandles } from './orca.ts'
 import { annotations, decisionOf, fixResult, hotspotAnnotations, parseMessage, reconcile, type Hotspot } from './plannotator.ts'
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
 import { overviewText, triageText } from './run/overview.ts'
 import { discussionOf, NON_BLOCKING_PREFIX, type Discussion, type DiscussionThread } from './run/discussion.ts'
-import { APPROVABLE, buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, undecidedAnswers, type ExplicitVerdict, type Texts, type VerdictName } from './run/review.ts'
+import { APPROVABLE, buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, type ExplicitVerdict, type Texts, type VerdictName } from './run/review.ts'
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
@@ -22,8 +22,6 @@ const CONFIG_PATH = '.claude/review-kit.local.json'
 const ROADMAP_DIR = 'docs/roadmap'
 const ABANDONED_AFTER_MIN = 1440
 const SETTINGS: { options: Record<string, unknown> } = { options: {} }
-const RECHECK_OPTION = 'Перепроверка — изменения после моего ревью'
-const FULL_REVIEW_OPTION = 'Ревью заново — весь PR'
 const CANCEL = 'Отмена'
 const CONTINUE_THERE = 'Продолжить там'
 const CLEAR = 'Очистить'
@@ -113,11 +111,11 @@ async function foreignRun($: EngineInterface, pr: number): Promise<boolean> {
   }
 }
 
-type RunScenario = 'review' | 'recheck' | 'feedback' | 'fix' | 'conflict'
+type RunScenario = 'review' | 'feedback' | 'fix' | 'conflict'
 
-const READ_ONLY_SCENARIOS: readonly RunScenario[] = ['review', 'recheck']
+const READ_ONLY_SCENARIOS: readonly RunScenario[] = ['review']
 
-const SKILL_OF: Record<RunScenario, string> = { review: 'pr-review-run', recheck: 'pr-recheck-run', feedback: 'pr-feedback-run', fix: 'pr-fix-run', conflict: 'pr-confl' }
+const SKILL_OF: Record<RunScenario, string> = { review: 'pr-review-run', feedback: 'pr-feedback-run', fix: 'pr-fix-run', conflict: 'pr-confl' }
 
 function handOff($: EngineInterface, pr: number, handoff: Handoff, scenario: RunScenario = 'review'): string {
   const text = `Use the review-kit:${SKILL_OF[scenario]} skill for PR ${pr}; context: .review-kit/run/${pr}/context.json`
@@ -192,6 +190,7 @@ async function resumeRun($: EngineInterface, pr: number, handoff: Handoff): Prom
   const text = await $.fs.read(`${dir}/context.json`).then(String, () => '')
   const saved = parseSaved(text)
   if (!saved?.head) return `Прогон PR ${pr} повреждён — выберите «Очистить».`
+  if (saved.scenario === 'recheck') return `Прогон PR ${pr} из прежней версии (перепроверка) — /pr-review stop, затем /pr ${pr}.`
   const head = (await runner($)(['git', 'rev-parse', 'HEAD'])).stdout.trim()
   const shift = await headShift(runner($), { saved: saved.head, head, branch: saved.headRef ?? '' })
   if (shift === 'moved') {
@@ -257,10 +256,7 @@ async function stashTop($: EngineInterface): Promise<string> {
   return (await runner($)(['git', 'rev-parse', '-q', '--verify', 'refs/stash'])).stdout.trim()
 }
 
-async function stashOrCancel($: EngineInterface, pr: number): Promise<SavedStash | 'cancel'> {
-  const answer = await $.ui.ask(`В дереве есть незакоммиченные изменения. Ревью PR ${pr} переключит ветку.`, ['Убрать в stash', 'Отменить']).catch(() => undefined)
-  if (answer !== 'Убрать в stash') return 'cancel'
-
+async function stashChanges($: EngineInterface, pr: number): Promise<SavedStash> {
   const now = (await runner($)(['date', '+%Y-%m-%d %H:%M:%S'])).stdout.trim()
   const name = `review-kit: pr-${pr} ${now}`
   const before = await stashTop($)
@@ -359,14 +355,9 @@ async function askAboutActive($: EngineInterface, pr: number | undefined): Promi
   const active = await activeRun($)
   if (active === undefined) return undefined
 
-  if (active === pr) {
-    const answer = await $.ui.ask(`Прогон PR ${pr} уже идёт.`, ['Вернуться к нему', 'Начать заново']).catch(() => undefined)
-    if (answer !== 'Начать заново') return `Продолжаем PR ${pr}.`
-    await finishRun($, pr, 'aborted')
-    return undefined
-  }
+  if (active === pr) return `Продолжаем PR ${pr}. Начать заново: /pr-review stop, затем /pr ${pr}.`
 
-  const question = pr === undefined ? `Идёт прогон PR ${active}.` : `Идёт прогон PR ${active}. Начать PR ${pr}?`
+  const question = `Идёт прогон PR ${active}. Начать PR ${pr}?`
   const answer = await $.ui.ask(question, [`Вернуться к PR ${active}`, `Прервать PR ${active}`]).catch(() => undefined)
   if (answer !== `Прервать PR ${active}`) return `Продолжаем PR ${active}.`
   await finishRun($, active, 'aborted')
@@ -381,18 +372,16 @@ async function routePr($: EngineInterface, pr: number | undefined, handoff: Hand
 
 async function routeOnce($: EngineInterface, pr: number | undefined, handoff: Handoff): Promise<string> {
   if (pr === undefined) {
-    const stop = await askAboutActive($, undefined)
-    if (stop) return stop
-
     const { rows, truncated } = await pullRows(await forge($))
-    return prListText(rows, truncated)
+    const active = await activeRun($)
+    return `${prListText(rows, truncated)}${active === undefined ? '' : `\n\nИдёт прогон PR ${active} — продолжить: /pr ${active}`}`
   }
 
   const loaded = await prContext($, pr)
   const { context } = loaded
   if (context.scenario === 'review') return startReview($, pr, { loaded, handoff })
   if (context.scenario === 'feedback') return startFix($, pr, { loaded, handoff, scenario: 'feedback' })
-  if (context.scenario === 'recheck') return startReview($, pr, { loaded, handoff, scenario: 'recheck' })
+  if (context.scenario === 'recheck') return startReview($, pr, { loaded, handoff })
   if (context.scenario === 'conflict') return conflictHandoff($, context, handoff)
   return context.scenario === 'closed' ? closedText(context) : SCENARIO_TEXT[context.scenario]
 }
@@ -405,17 +394,10 @@ function conflictHandoff($: EngineInterface, context: PrContext, handoff: Handof
   return `${what} Разрешаю: /pr-confl ${context.number}.`
 }
 
-async function reviewOrRecheck($: EngineInterface, { context, data }: Loaded): Promise<'review' | 'recheck' | undefined> {
-  if (context.isOwn || context.state === 'closed' || !priorComments(data)) return 'review'
-  const answer = await $.ui.ask(`У PR ${context.number} уже есть ваше ревью (статус: ${context.status}). Что запускаем?`, [RECHECK_OPTION, FULL_REVIEW_OPTION, CANCEL]).catch(() => undefined)
-  return answer === RECHECK_OPTION ? 'recheck' : answer === FULL_REVIEW_OPTION ? 'review' : undefined
-}
-
-async function startReview($: EngineInterface, pr: number, { loaded, handoff, scenario = 'review' }: { loaded: Loaded; handoff: Handoff; scenario?: 'review' | 'recheck' }): Promise<string> {
+async function startReview($: EngineInterface, pr: number, { loaded, handoff }: { loaded: Loaded; handoff: Handoff }): Promise<string> {
   const { context } = loaded
   if (context.state === 'closed' && !context.merged) return `PR ${pr} закрыт без слияния — ревью не делаю.`
-  if (scenario === 'recheck' && context.isOwn) return `PR ${pr} — свой PR: перепроверка только чужого, замечания к своему — /pr-feedback ${pr}.`
-  return startRun($, pr, { loaded, handoff, scenario })
+  return startRun($, pr, { loaded, handoff, scenario: 'review' })
 }
 
 async function startFix($: EngineInterface, pr: number, { loaded, handoff, scenario }: { loaded: Loaded; handoff: Handoff; scenario: 'feedback' | 'fix' }): Promise<string> {
@@ -444,10 +426,6 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
 
   const root = await projectRoot($)
 
-  const reviewing = scenario === 'review' || scenario === 'recheck'
-  const model = scenario === 'conflict' ? '' : await $.ui.ask(`Модель для ${reviewing ? 'ревью' : 'разбора замечаний'} PR ${pr}?`, ['opus', 'sonnet', 'haiku']).catch(() => undefined)
-  if (!model && scenario !== 'conflict') return 'Отменено: дерево не тронуто.'
-
   const run = runner($)
   const provider = await forge($)
   const plan = await planSwitch(run, { number: pr, headRef: context.headRef, headSha: context.headSha, baseRef: context.baseRef, own: context.isOwn, pullRef: provider.pullRef(pr) })
@@ -464,8 +442,7 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
   }
 
   const dirty = (await runner($)(STATUS_ARGV)).stdout.trim()
-  const saved = dirty ? await stashOrCancel($, pr) : null
-  if (saved === 'cancel') return 'Отменено: дерево не тронуто.'
+  const saved = dirty ? await stashChanges($, pr) : null
   const stash = saved?.name ?? null
 
   const returnTo = (await gitText(run, ['branch', '--show-current'])).trim() || (await gitText(run, ['rev-parse', 'HEAD'])).trim()
@@ -477,25 +454,19 @@ async function startRun($: EngineInterface, pr: number, { loaded, handoff, scena
     await $.fs.write(`${dir}/intake.json`, JSON.stringify({ head: context.headSha, items }, null, 2))
     await $.fs.write(`${dir}/overview.md`, overviewText(loaded.data, items))
   }
-  if (scenario === 'recheck') {
-    const prior = priorComments(loaded.data)
-    if (!prior) throw new Error(`моего ревью в PR ${pr} нет — перепроверять нечего; дерево на коммите PR${stash ? `, ваши изменения в stash «${stash}» — вернуть: git switch ${returnTo} и git stash pop` : ''}`)
-    const base = await recheckBase(runner($), { lastCommit: prior.review.commitSha, head: switched.head, baseRef: context.baseRef })
-    await $.fs.write(`${dir}/recheck.json`, JSON.stringify({ ...base, reviewId: prior.review.id, prior: prior.prior }, null, 2))
-  }
   const plannotator = await runner($)(['plannotator', '--version']).then(result => result.exitCode === 0, () => false)
   const roadmap = context.isOwn ? { roadmap: `${await roadmapDir($)}/pr-${pr}-review-fixes.md` } : {}
-  await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, stashSha: saved?.sha ?? null, returnTo, model, scenario, plannotator, ...roadmap }))
+  await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, stashSha: saved?.sha ?? null, returnTo, scenario, plannotator, ...roadmap }))
   await openRun($, { pr, context, head: switched.head, scenario })
   if (scenario === 'conflict') return `PR ${pr} (свой, конфликт): дерево на ${context.headRef}${stash ? `, stash «${stash}»` : ''}.`
   const next = handOff($, pr, handoff, scenario)
 
   if (scenario === 'feedback' || scenario === 'fix') {
-    return `PR ${pr} (свой, ${scenario === 'feedback' ? 'замечания' : 'правки'}): дерево на ${context.headRef}${stash ? `, stash «${stash}»` : ''}, модель ${model}. Прогон открыт до конца раунда; закрыть вручную — /pr-${scenario} stop.${next}`
+    return `PR ${pr} (свой, ${scenario === 'feedback' ? 'замечания' : 'правки'}): дерево на ${context.headRef}${stash ? `, stash «${stash}»` : ''}. Прогон открыт до конца раунда; закрыть вручную — /pr-${scenario} stop.${next}`
   }
 
   const who = context.isOwn ? 'свой — только отчёт' : context.state === 'closed' ? 'закрыт — только отчёт' : context.author
-  return `PR ${pr} (${who}): дерево на ${switched.detached ? 'коммите PR' : context.headRef}${stash ? `, stash «${stash}»` : ''}, модель ${model}${switched.baseFallback ? `, база ревью — от main: ветка ${context.baseRef} на сервере удалена` : ''}${switched.baseNote ? `, ${switched.baseNote}` : ''}. Прогон открыт до конца ревью; закрыть вручную — /pr-review stop.${next}`
+  return `PR ${pr} (${who}): дерево на ${switched.detached ? 'коммите PR' : context.headRef}${stash ? `, stash «${stash}»` : ''}${switched.baseFallback ? `, база ревью — от main: ветка ${context.baseRef} на сервере удалена` : ''}${switched.baseNote ? `, ${switched.baseNote}` : ''}. Прогон открыт до конца ревью; закрыть вручную — /pr-review stop.${next}`
 }
 
 async function startConflict($: EngineInterface, pr: number): Promise<string> {
@@ -534,15 +505,15 @@ async function conflictState($: EngineInterface, pr: number, opened: string): Pr
   return `${opened}\nclean: конфликтов с ${context.baseRef} нет — база не вливалась, прогон закрыт`
 }
 
-type PrepareKind = 'review' | 'recheck' | 'feedback' | 'fix-check'
-type WorkflowId = 'funnel' | 'delta' | 'statuses' | 'triage' | 'fix-check'
+type PrepareKind = 'review' | 'feedback' | 'fix-check'
+type WorkflowId = 'funnel' | 'triage' | 'fix-check'
 interface WorkflowSpec { id: WorkflowId; scriptPath: string; args: Record<string, unknown> }
 
 function runner($: EngineInterface): Run {
   return async (argv, init) => $.process.run(argv, { cwd: await $.session.root(), ...init })
 }
 
-async function runContext($: EngineInterface, pr: number): Promise<{ dir: string; context: { head: string; headSha: string; base: string; model: string } }> {
+async function runContext($: EngineInterface, pr: number): Promise<{ dir: string; context: { head: string; headSha: string; base: string } }> {
   if ((await activeRun($)) !== pr) throw new Error(`нет активного прогона PR ${pr}`)
   const dir = await runDir($, pr)
   return { dir, context: JSON.parse(String(await $.fs.read(`${dir}/context.json`))) }
@@ -569,13 +540,13 @@ async function loadDiscussion($: EngineInterface, pr: number, { description = tr
   return discussionOf(data, { bots, description })
 }
 
-async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; id: WorkflowId; base: string; head: string; rulesRev: string; model: string; foreign: boolean; discussion: Discussion & { failed?: string }; items?: TriageItem[]; mode?: 'feedback' | 'recheck'; scope?: string }): Promise<{ spec: WorkflowSpec; notes: string[] }> {
+async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; id: WorkflowId; base: string; head: string; rulesRev: string; foreign: boolean; discussion: Discussion & { failed?: string }; items?: TriageItem[]; scope?: string }): Promise<{ spec: WorkflowSpec; notes: string[] }> {
   const run = runner($)
   const out = `${w.dir}/${w.id}`
   const sha = async (rev: string) => (await gitText(run, ['rev-parse', rev])).trim()
   const [base, head, rulesRev] = await Promise.all([sha(w.base), sha(w.head), sha(w.rulesRev)])
   const { rules, changedRules } = await readRules(run, { rev: rulesRev, base, head })
-  const input = await buildInput(run, { base, head, rules, items: w.items, scope: w.scope, model: w.model, discussion: w.discussion.text })
+  const input = await buildInput(run, { base, head, rules, items: w.items, scope: w.scope, discussion: w.discussion.text })
   const notes = [
     ...(!w.items && rules.size === 0 ? [B_SKIPPED] : []),
     ...(w.foreign && changedRules.length ? [`PR меняет правила агентов: ${changedRules.join(', ')} — ревью шло по правилам базы`] : []),
@@ -595,8 +566,8 @@ async function writeWorkflow($: EngineInterface, w: { pr: number; dir: string; i
   for (const role of w.items ? ['triage'] : [...roles, 'refuter']) await $.fs.write(`${out}/manifest-${role}.txt`, manifestText(copies, notes))
   const rel = `.review-kit/run/${w.pr}/${w.id}`
   const args = w.items
-    ? { pr: w.pr, mode: w.mode, input: `${rel}/input.md`, manifestDir: rel, model: w.model, ids: w.items.map(item => item.id) }
-    : { pr: w.pr, input: `${rel}/input.md`, manifestDir: rel, roles, model: w.model }
+    ? { pr: w.pr, input: `${rel}/input.md`, manifestDir: rel, ids: w.items.map(item => item.id) }
+    : { pr: w.pr, input: `${rel}/input.md`, manifestDir: rel, roles }
   return { spec: { id: w.id, scriptPath: `${out}/${script}`, args }, notes }
 }
 
@@ -608,18 +579,13 @@ async function prepare($: EngineInterface, pr: number, kind: PrepareKind, paths:
   })
   const { discussion } = loaded
   await $.fs.write(`${dir}/discussion.json`, JSON.stringify(discussionFacts(discussion)))
-  if (kind === 'review' || kind === 'recheck') await $.fs.write(`${dir}/snapshot.json`, JSON.stringify({ headSha: context.headSha, commentIds: loaded.data ? commentIds(loaded.data) : null }))
-  const base = { pr, dir, model: context.model, discussion }
+  if (kind === 'review') await $.fs.write(`${dir}/snapshot.json`, JSON.stringify({ headSha: context.headSha, commentIds: loaded.data ? commentIds(loaded.data) : null }))
+  const base = { pr, dir, discussion }
   const parts: Array<{ spec: WorkflowSpec; notes: string[] }> = []
   if (kind === 'review') parts.push(await writeWorkflow($, { ...base, id: 'funnel', base: context.base, head: context.head, rulesRev: context.base, foreign: true }))
-  if (kind === 'recheck') {
-    const recheck = JSON.parse(String(await $.fs.read(`${dir}/recheck.json`))) as { base: string; scope?: string; prior: TriageItem[] }
-    parts.push(await writeWorkflow($, { ...base, id: 'statuses', base: recheck.base, head: context.head, rulesRev: context.base, foreign: true, items: recheck.prior, mode: 'recheck', scope: recheck.scope }))
-    parts.push(await writeWorkflow($, { ...base, id: 'delta', base: recheck.base, head: context.head, rulesRev: context.base, foreign: true, scope: recheck.scope }))
-  }
   if (kind === 'feedback') {
     const intake = JSON.parse(String(await $.fs.read(`${dir}/intake.json`))) as { items: TriageItem[] }
-    parts.push(await writeWorkflow($, { ...base, id: 'triage', base: context.base, head: 'HEAD', rulesRev: 'HEAD', foreign: false, items: intake.items, mode: 'feedback' }))
+    parts.push(await writeWorkflow($, { ...base, id: 'triage', base: context.base, head: 'HEAD', rulesRev: 'HEAD', foreign: false, items: intake.items }))
   }
   if (kind === 'fix-check') {
     const head = await snapshot(runner($), { paths, indexFile: `${dir}/snapshot.index` })
@@ -647,12 +613,12 @@ async function collect($: EngineInterface, pr: number, id: WorkflowId, outputFil
   const text = String(await $.fs.read(outputFile))
   await $.fs.write(`${out}/raw.json`, text)
   const raw = JSON.parse(text) as unknown
-  if (id === 'triage' || id === 'statuses') {
-    const source = JSON.parse(String(await $.fs.read(`${dir}/${id === 'triage' ? 'intake' : 'recheck'}.json`))) as { items?: TriageItem[]; prior?: TriageItem[] }
-    const items = finishTriage(raw, source.items ?? source.prior ?? [], id === 'triage' ? 'feedback' : 'recheck')
+  if (id === 'triage') {
+    const source = JSON.parse(String(await $.fs.read(`${dir}/intake.json`))) as { items?: TriageItem[] }
+    const items = finishTriage(raw, source.items ?? [])
     const result = JSON.stringify({ items }, null, 2)
-    await $.fs.write(`${dir}/${id === 'triage' ? 'triage' : 'statuses'}.json`, result)
-    return id === 'triage' ? `${triageText(pr, (source.items ?? []) as IntakeItem[], items)}\n\ntriage: .review-kit/run/${pr}/triage.json` : staleMarked($, pr, dir, result)
+    await $.fs.write(`${dir}/triage.json`, result)
+    return `${triageText(pr, (source.items ?? []) as IntakeItem[], items)}\n\ntriage: .review-kit/run/${pr}/triage.json`
   }
   const run = runner($)
   const { base, head } = JSON.parse(String(await $.fs.read(`${out}/range.json`))) as { base: string; head: string }
@@ -664,7 +630,6 @@ async function collect($: EngineInterface, pr: number, id: WorkflowId, outputFil
   const discussion = await readJson<DiscussionFacts>($, `${out}/discussion.json`, { threads: [], questions: [], truncated: false })
   const result = collectFindings({
     raw, changed, lineCounts, rules, skipped: notAttached(states), table, ...(await workflowNotes($, out)),
-    ...(id === 'delta' ? { minSeverity: 'blocking' as Severity } : {}),
     threads: discussion.threads, repeats: id !== 'fix-check',
   })
   const json = JSON.stringify({ ...result, discussion: { ...discussion, open: openThreads(discussion.threads) } }, null, 2)
@@ -711,10 +676,7 @@ async function publishReview($: EngineInterface, { pr, ids, from, verdict: asked
   const plannotator = from === 'plannotator'
   if (plannotator && asked) return 'not published: вердикт при публикации из Plannotator задаёт его решение — verdict не передаётся'
   if (asked && asked !== 'approve' && asked !== 'request-changes') return `not published: неизвестный вердикт ${String(asked)} — approve или request-changes`
-  const recheck = context.scenario === 'recheck'
-  const missing = [`${dir}/findings.json`, ...(recheck ? [`${dir}/statuses.json`] : [])]
-  const absent = (await Promise.all(missing.map(path => $.fs.read(path).then(() => null, () => path.slice(dir.length + 1))))).filter(Boolean)
-  if (absent.length) return `not published: в этом прогоне нет результатов агентов (${absent.join(', ')}) — вердикт не из чего считать. Сначала ${recheck ? 'перепроверка' : 'ревью'} агентами: review_prepare → Workflow → review_collect`
+  if (!(await $.fs.read(`${dir}/findings.json`).then(() => true, () => false))) return 'not published: в этом прогоне нет результатов агентов (findings.json) — вердикт не из чего считать. Сначала ревью агентами: review_prepare → Workflow → review_collect'
   const source = plannotator ? `${dir}/plannotator` : dir
   const stored = await readJson<FindingsResult>($, `${source}/findings.json`, { findings: [], belowBar: [], dropped: [], unconfirmed: [], notChecked: [] })
   const findings = plannotator ? stored.findings : reviewPool(stored)
@@ -726,25 +688,15 @@ async function publishReview($: EngineInterface, { pr, ids, from, verdict: asked
   if (unknown.length) return `not published: нет находки: ${unknown.join(', ')}`
   const selected = findings.filter(item => wanted.includes(item.id))
   if (decision === 'annotated' && selected.length === 0) return 'not published: в Plannotator остались только узкие места гайда — это подсказки, публиковать нечего. Свой комментарий — аннотация без строки [gN · узкое место гайда]'
-  const prior = (await readJson<{ prior: Array<{ id: string; path: string | null; line: number | null; threadId?: string | null; quote?: string; body?: string }> }>($, `${dir}/recheck.json`, { prior: [] })).prior
-  const blockingOf = (id: string) => !(prior.find(p => p.id === id)?.body ?? '').trim().startsWith(NON_BLOCKING_PREFIX)
-  const statuses = recheck ? (await readJson<{ items: Array<{ id: string; class: string; reason?: string; message?: string }> }>($, `${dir}/statuses.json`, { items: [] })).items.map(s => ({ ...s, blocking: blockingOf(s.id) })) : []
-  const undecided = undecidedAnswers(statuses)
-  if (undecided.length) {
-    const place = new Map(prior.map(p => [p.id, p.path ? `${p.path}:${p.line}` : 'общее']))
-    return `not published: автор ответил, а решение по ответу не принято: ${undecided.map(id => place.get(id) ?? id).join(', ')} — спросите пользователя и запишите accepted или open в statuses.json`
-  }
   const stale = await staleness($, pr, dir).then(note => ({ note }), (error: unknown) => ({ error: (error as Error).message }))
   if ('error' in stale) return `not published: свежесть PR не проверена — ${stale.error}`
-  if (stale.note) return `not published: PR обновился после снимка: ${stale.note} — перезапустите ${recheck ? 'перепроверку' : 'ревью'}: /pr-${recheck ? 'recheck' : 'review'} ${pr} → «Начать заново»`
+  if (stale.note) return `not published: PR обновился после снимка: ${stale.note} — перезапустите ревью: /pr-review stop, затем /pr ${pr}`
   const provider = await forge($)
   const covered = parseCovered(await gitText(runner($), ['diff', '-U0', '--no-color', '--no-renames', context.base, context.head]))
-  const discussion = await readJson<DiscussionFacts>($, `${dir}/discussion.json`, { threads: [], questions: [], truncated: false })
-  const messages = Object.fromEntries(statuses.filter(s => s.message?.trim()).map(s => [s.id, String(s.message)]))
-  const content = selected.length + Object.keys(messages).length + (plannotator && texts.summary?.trim() ? 1 : 0)
+  const content = selected.length + (plannotator && texts.summary?.trim() ? 1 : 0)
   const chosen = (() => {
     try {
-      return { verdict: chosenVerdict({ selected, statuses, decision, verdict: asked, openThreads: openThreads(discussion.threads, statuses).length, content }) }
+      return { verdict: chosenVerdict({ selected, decision, verdict: asked, content }) }
     } catch (error) {
       return { error: (error as Error).message }
     }
@@ -754,19 +706,14 @@ async function publishReview($: EngineInterface, { pr, ids, from, verdict: asked
   const { draft, notes } = buildDraft({ selected, texts: plannotator ? texts : { comments: texts.comments }, verdict, approve: APPROVABLE.includes(verdict), covered, capabilities: provider.capabilities })
   const bare = draft.verdict === 'approve' && !draft.body.trim() && draft.comments.length === 0
   const inline = draft.comments.map(c => `• ${c.path}:${c.line} — ${c.body}`).join('\n')
-  const replies = buildReplies(prior.map(p => ({ id: p.id, threadId: p.threadId ?? null, quote: p.quote ?? '' })), messages)
-  const where = new Map(prior.map(p => [p.id, p.path ? `${p.path}:${p.line}` : 'общее']))
-  const answers = Object.keys(messages).length ? `\n\nОтветы автору:\n${Object.entries(messages).map(([id, text]) => `• ${where.get(id) ?? id} — ${text}`).join('\n')}` : ''
-  const question = (bare ? `Одобрить PR ${pr} без комментариев?${answers}` : `Публикуем ревью PR ${pr} (${verdict})?\n\n${draft.body}\n\n${inline}${answers}`).slice(0, CONFIRM_TEXT_LIMIT)
+  const question = bare ? `Одобрить PR ${pr} без комментариев?` : `Публикуем ревью PR ${pr} (${verdict})?\n\n${draft.body}\n\n${inline}`.slice(0, CONFIRM_TEXT_LIMIT)
   if (!plannotator) {
     const answer = await $.ui.ask(question, ['Да', 'Нет']).then(choice => ({ choice: String(choice) }), (error: unknown) => ({ error: String(error) }))
     if ('error' in answer) return `not published: окно подтверждения не открылось — ${answer.error} (вердикт ${verdict})`
     if (answer.choice !== 'Да') return `not published: пользователь отказал (вердикт ${verdict})`
   }
   const { url } = await provider.publishReview(pr, draft)
-  const replied = replies.length ? await provider.publishReplies(pr, replies).then(() => [], (error: unknown) => [`ответ автору не отправлен: ${(error as Error).message}`]) : []
-  const tail = [...notes, ...replied]
-  return `published: ${url} (вердикт ${verdict})${tail.length ? `\n${tail.join('\n')}` : ''}`
+  return `published: ${url} (вердикт ${verdict})${notes.length ? `\n${notes.join('\n')}` : ''}`
 }
 
 async function guideSource($: EngineInterface, target: GuideTarget): Promise<GuideSource> {
@@ -777,8 +724,6 @@ async function guideSource($: EngineInterface, target: GuideTarget): Promise<Gui
   const dir = await runDir($, pull.number)
   const discussion = await loadDiscussion($, pull.number, { description: false, pull }).then(found => found.text, (error: unknown) => `## DISCUSSION\nобсуждение не загрузилось: ${(error as Error).message}`)
   const active = (await activeRun($)) === pull.number ? await readJson<{ base?: string; head?: string; baseFallback?: boolean; baseNote?: string; scenario?: string }>($, `${dir}/context.json`, {}) : {}
-  const recheck = active.scenario === 'recheck' ? await readJson<{ base?: string; mode?: string; note?: string }>($, `${dir}/recheck.json`, {}) : {}
-  if (active.head && recheck.base && recheck.mode) return prSource(pull, { base: recheck.base, head: active.head, baseFallback: Boolean(active.baseFallback), baseNote: active.baseNote, recheck: { mode: recheck.mode, note: recheck.note }, discussion })
   if (active.base && active.head) return prSource(pull, { base: active.base, head: active.head, baseFallback: Boolean(active.baseFallback), baseNote: active.baseNote, discussion })
   const { target: head } = await fetchHead(run, { number: pull.number, headRef: pull.headRef, headSha: pull.headSha, baseRef: pull.baseRef, own: false, pullRef: provider.pullRef(pull.number) })
   return prSource(pull, { head, ...(await reviewBase(run, { final: head, baseRef: pull.baseRef })), discussion })
@@ -791,7 +736,7 @@ async function prepareGuide($: EngineInterface, text: string): Promise<string> {
   await exclude($, RUN_FILES_EXCLUDE)
   await $.fs.write(path, await guideText(runner($), source))
   const facts = await runFacts($)
-  const inRun = target.kind === 'pr' && facts?.status === 'active' && facts.pr === target.number && (facts.scenario === 'review' || facts.scenario === 'recheck')
+  const inRun = target.kind === 'pr' && facts?.status === 'active' && facts.pr === target.number && facts.scenario === 'review'
   return `guide: ${path}\n${source.heading}${inRun ? `\nhotspots: .review-kit/run/${target.number}/hotspots.json` : ''}`
 }
 
@@ -1144,7 +1089,7 @@ async function startPlannotator($: EngineInterface, pr: number, mode: Plannotato
 const TOOL_SPECS = [
   {
     name: 'review_publish',
-    description: 'Publish the review of the active review-kit run: findings by ids (or "all") — confirmed, below the bar or unconfirmed — with texts from texts.json. From chat the verdict follows the selected findings and, in a recheck, the statuses of earlier comments (a blocking finding or an open/partial blocking earlier comment → request changes, otherwise approve; nothing for the author → never request changes); verdict: "approve" | "request-changes" — the verdict the user named — overrides that, and an approval without selected findings goes out bare. The tool asks the user itself, publishing only on «Да». from: "plannotator" publishes the Plannotator result without asking (annotated → request changes, approved → approve) and takes no verdict. Refuses when the run has no agent results. Answers "published: <url> (вердикт …)" or "not published: … (вердикт …)" — «пользователь отказал» or «окно подтверждения не открылось».',
+    description: 'Publish the review of the active review-kit run: findings by ids (or "all") — confirmed, below the bar or unconfirmed — with texts from texts.json. From chat the verdict follows the selected findings only (a blocking finding → request changes, otherwise approve; nothing selected → never request changes); verdict: "approve" | "request-changes" — the verdict the user named — overrides that, and an approval without selected findings goes out bare. The tool asks the user itself, publishing only on «Да». from: "plannotator" publishes the Plannotator result without asking (annotated → request changes, approved → approve) and takes no verdict. Refuses when the run has no agent results. Answers "published: <url> (вердикт …)" or "not published: … (вердикт …)" — «пользователь отказал» or «окно подтверждения не открылось».',
     inputSchema: { type: 'object', properties: { pr: { type: 'number' }, ids: { oneOf: [{ const: 'all' }, { type: 'array', items: { type: 'string' } }] }, from: { enum: ['chat', 'plannotator'] }, verdict: { enum: ['approve', 'request-changes'] } }, required: ['pr', 'ids'] },
     isDeferred: false,
   },
@@ -1180,14 +1125,14 @@ const TOOL_SPECS = [
   },
   {
     name: 'review_prepare',
-    description: 'Prepare agent input for the active review-kit run: kind review | recheck | feedback | fix-check (fix-check needs paths = the round paths). Answers JSON { workflows: [{ id, scriptPath, args }], notes, overview? } (overview — kind feedback: every comment of the PR, ready to show) — call Workflow with each scriptPath and args; or "review-kit: …" on error.',
-    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, kind: { enum: ['review', 'recheck', 'feedback', 'fix-check'] }, paths: { type: 'array', items: { type: 'string' } } }, required: ['pr', 'kind'] },
+    description: 'Prepare agent input for the active review-kit run: kind review | feedback | fix-check (fix-check needs paths = the round paths). Answers JSON { workflows: [{ id, scriptPath, args }], notes, overview? } (overview — kind feedback: every comment of the PR, ready to show) — call Workflow with each scriptPath and args; or "review-kit: …" on error.',
+    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, kind: { enum: ['review', 'feedback', 'fix-check'] }, paths: { type: 'array', items: { type: 'string' } } }, required: ['pr', 'kind'] },
     isDeferred: false,
   },
   {
     name: 'review_collect',
-    description: 'Collect a finished review-kit workflow: id from review_prepare and the <output-file> of its completion notification. Answers the result JSON (findings, or recheck statuses); for triage — the summary ready to show and the triage.json path or "review-kit: …" when the review did not happen.',
-    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, id: { enum: ['funnel', 'delta', 'statuses', 'triage', 'fix-check'] }, outputFile: { type: 'string' } }, required: ['pr', 'id', 'outputFile'] },
+    description: 'Collect a finished review-kit workflow: id from review_prepare and the <output-file> of its completion notification. Answers the result JSON (findings); for triage — the summary ready to show and the triage.json path or "review-kit: …" when the review did not happen.',
+    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, id: { enum: ['funnel', 'triage', 'fix-check'] }, outputFile: { type: 'string' } }, required: ['pr', 'id', 'outputFile'] },
     isDeferred: false,
   },
   {
@@ -1204,7 +1149,7 @@ const TOOL_SPECS = [
   },
   {
     name: 'review_finish',
-    description: 'Close the active review-kit run for this PR when the review is done. A review or recheck that ran in its own review worktree (a /pr all tab) also removes that worktree — the answer then says so, and no command works in this tab afterwards.',
+    description: 'Close the active review-kit run for this PR when the review is done. A review that ran in its own review worktree (a /pr all tab) also removes that worktree — the answer then says so, and no command works in this tab afterwards.',
     inputSchema: { type: 'object', properties: { pr: { type: 'number' } }, required: ['pr'] },
     isDeferred: false,
   },
@@ -1212,8 +1157,7 @@ const TOOL_SPECS = [
 
 const COMMAND_SPECS = [
   { name: 'pr-review', description: 'Ревью PR в текущей вкладке', argumentHint: '<номер PR> | stop' },
-  { name: 'pr', description: 'Что делать с PR: статусы и выбор сценария', argumentHint: '[номер PR] | all | cleanup' },
-  { name: 'pr-recheck', description: 'Перепроверить правки в чужом PR после моего ревью', argumentHint: '<номер PR> | stop' },
+  { name: 'pr', description: 'Список PR или сценарий для PR N', argumentHint: '[номер PR] | all' },
   { name: 'pr-feedback', description: 'Разобрать замечания к своему PR', argumentHint: '<номер PR> | stop' },
   { name: 'pr-fix', description: 'Раунд правок своего PR', argumentHint: '<номер PR> | stop' },
   { name: 'pr-view', description: 'Открыть находки идущего ревью в Plannotator' },
@@ -1252,25 +1196,6 @@ export const register: Register = (on, options) => {
     })
   }
 
-  on('command.run', { command: 'pr-recheck' }, async ($, e) => {
-    const arg = String(e.args ?? '').trim()
-    if (arg === 'stop') {
-      const active = await activeRun($)
-      if (active === undefined) return { text: 'Активного прогона нет.' }
-      await finishRun($, active, 'aborted')
-      return { text: `Прогон PR ${active} закрыт.` }
-    }
-
-    const pr = Number(arg)
-    if (!Number.isInteger(pr) || pr < 1) return { text: 'Использование: /pr-recheck <номер PR> | /pr-recheck stop' }
-
-    try {
-      return { text: await startReview($, pr, { loaded: await prContext($, pr), handoff: 'submit', scenario: 'recheck' }) }
-    } catch (error) {
-      return { text: `review-kit: ${(error as Error).message}` }
-    }
-  })
-
   on('command.run', { command: 'pr-review' }, async ($, e) => {
     const arg = String(e.args ?? '').trim()
     if (arg === 'stop') {
@@ -1284,10 +1209,7 @@ export const register: Register = (on, options) => {
     if (!Number.isInteger(pr) || pr < 1) return { text: 'Использование: /pr-review <номер PR> | /pr-review stop' }
 
     try {
-      const loaded = await prContext($, pr)
-      const scenario = await reviewOrRecheck($, loaded)
-      if (!scenario) return { text: 'Отменено: дерево не тронуто.' }
-      return { text: await startReview($, pr, { loaded, handoff: 'submit', scenario }) }
+      return { text: await startReview($, pr, { loaded: await prContext($, pr), handoff: 'submit' }) }
     } catch (error) {
       return { text: `review-kit: ${(error as Error).message}` }
     }

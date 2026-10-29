@@ -30,23 +30,6 @@ export interface IntakeItem {
   at: string
 }
 
-export interface PriorItem {
-  id: string
-  reviewId: string
-  threadId: string | null
-  path: string | null
-  line: number | null
-  author: string
-  body: string
-  quote: string
-  replies: PriorReply[]
-}
-
-export interface PriorReply {
-  author: string
-  body: string
-}
-
 export interface PrContext {
   number: number
   title: string
@@ -174,29 +157,6 @@ export function scenarioOf(data: PrData): Scenario {
   if (last.commitSha !== data.pull.headSha) return 'recheck'
   const answered = threads.some(thread => thread.comments.some(comment => same(comment.author, data.me)) && same(lastOf(thread).author, data.pull.author))
   return answered ? 'recheck' : 'wait-author'
-}
-
-export function priorComments(data: PrData): { review: Review; prior: PriorItem[] } | null {
-  const { reviews, threads } = live(data)
-  const last = latestMine(reviews, data.me)
-  if (!last) return null
-  const threadOf = (comment: Comment) => threads.find(item => item.comments.some(c => c.id === comment.id))
-  const repliesTo = (comment: Comment): PriorReply[] => {
-    const thread = threadOf(comment)
-    const after = thread ? thread.comments.slice(thread.comments.findIndex(c => c.id === comment.id) + 1) : []
-    return after.filter(c => !mine(c, data.me)).map(c => ({ author: c.author, body: c.body }))
-  }
-  const toPrior = (comment: Comment): PriorItem => {
-    const reviewId = comment.reviewId ?? last.id
-    return { id: `${reviewId}/${comment.id}`, reviewId, threadId: threadOf(comment)?.id ?? null, path: comment.path ?? null, line: comment.line ?? null, author: data.me, body: comment.body, quote: comment.body, replies: repliesTo(comment) }
-  }
-  const latest = threads.flatMap(thread => thread.comments).filter(comment => comment.reviewId === last.id && same(comment.author, data.me))
-  const answered = threads
-    .filter(thread => thread.comments[0].reviewId !== last.id && same(lastOf(thread).author, data.pull.author))
-    .flatMap(thread => thread.comments.filter(comment => same(comment.author, data.me)).slice(0, 1))
-  const prior: PriorItem[] = [...latest, ...answered].map(toPrior)
-  const body: PriorItem[] = last.body.trim() ? [{ id: `review/${last.id}`, reviewId: last.id, threadId: null, path: null, line: null, author: data.me, body: last.body, quote: last.body, replies: [] }] : []
-  return { review: last, prior: [...prior, ...body] }
 }
 
 export function contextOf(data: PrData, scenario: Scenario): PrContext {

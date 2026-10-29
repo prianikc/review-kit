@@ -1,6 +1,6 @@
 ---
 name: guide
-description: Use when someone needs a short guide to what a pull request or a commit changes — to understand what they are reviewing (/guide 140, /guide 3edsf3a, «что в этом PR», «что сделано в коммите abc123»). Called by pr-review-run and pr-recheck-run while their agents run (in a recheck — the changes since my review); people, agents and other skills may call it too.
+description: Use when someone needs a short guide to what a pull request or a commit changes — to understand what they are reviewing (/guide 140, /guide 3edsf3a, «что в этом PR», «что сделано в коммите abc123»). Called by pr-review-run while its agents run; people, agents and other skills may call it too.
 argument-hint: "<номер PR | id коммита>"
 ---
 
@@ -13,7 +13,7 @@ This is a guide, not a review: no verdict, no levels, no publishing, no tree swi
 `hotspots` file of step 4.
 
 1. `guide_prepare` with `target`. An answer starting with `review-kit:` → show it and stop.
-2. The answer is `guide: <path>`, the heading line and, inside a review or recheck run of that PR, `hotspots: <path>`. Read the whole file with Read (in parts when it is long): the
+2. The answer is `guide: <path>`, the heading line and, inside a review run of that PR, `hotspots: <path>`. Read the whole file with Read (in parts when it is long): the
    heading and URL, `MESSAGE` (PR description or commit message), `COMMITS`, `STAT`, `NOTES`, `DISCUSSION` (a PR's
    threads and comments so far) and `DIFF`.
 3. Write the guide in Russian, right in the chat, short enough to fit one screen:

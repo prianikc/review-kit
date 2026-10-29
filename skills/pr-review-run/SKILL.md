@@ -5,7 +5,7 @@ description: Use when review-kit opened a review run for a PR (.review-kit/run/<
 
 # pr-review-run
 
-The mod already switched the tree to the PR, asked for the model and opened the run. Read `.review-kit/run/<N>/context.json`:
+The mod already switched the tree to the PR and opened the run; the agents run on the session's model. Read `.review-kit/run/<N>/context.json`:
 `number`, `title`, `author`, `isOwn`, `state`, `status`, `baseFallback`, `baseNote`. Ask nothing before the review.
 No `context.json` → tell the user to run `/pr-review <N>` and stop.
 
@@ -37,7 +37,9 @@ PR's threads before this run (`threads`: `id`, `place`, `status`, `last` — who
 ids of the open threads, `questions` — questions with no answer. Every finding has `thread` (`T<n>` or `null`); a
 follow-up to a thread also has `followUp`. In Russian, in this order:
 1. `Вердикт: <verdict>` with one line of reason, from `findings` and the open threads: Changes requested if any blocking
-   finding or any thread in `discussion.open`, Approved with comments if only non-blocking, Approved if none.
+   finding (including a follow-up to an earlier thread), Approved with comments if only non-blocking, Approved if none.
+   Open threads alone never decide the verdict — an earlier comment that is still not fixed comes back from the agents
+   as a follow-up finding.
 2. `Статус: <status>` from `context.json`.
 3. «Подтверждённые» — each of `findings`: `<id> · <блокирует: <category> | не блокирует>[ · <mark>][ · <thread>] · <file>:<lines>` — the problem; its
    failure scenario or the rule it breaks; with `followUp` also «follow-up к <thread>: <followUp>».
@@ -83,7 +85,7 @@ the tool prefixes it with «TODO: » itself, never write the prefix.
    no body and no comments anywhere.
 3. `review_publish` with `pr`, `ids`, and `verdict` (`approve` | `request-changes`) whenever the user named one — it
    overrides the computed verdict. Without it the tool picks the verdict itself: a blocking finding, an open blocking
-   thread of the PR, or in a recheck an open or partial blocking earlier comment → request changes, otherwise approve —
+   follow-up of an earlier thread → request changes, otherwise approve —
    but request changes only when something goes to the author (chosen findings or replies); with nothing chosen it
    approves. An explicit request-changes with nothing chosen is refused (`not published: запрос изменений без
    комментариев …`) — ask the user to pick findings or approve. It shows the review and asks the user

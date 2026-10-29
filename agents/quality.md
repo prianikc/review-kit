@@ -32,6 +32,8 @@ your manifest, and the PR number.
    thread unless the author's latest reply leaves it unresolved; in that case report it as a
    follow-up and quote the reply, saying why it does not close the issue. If the author points
    to another PR or commit as the fix, verify it there when it is reachable.
+   The threads hold the review history: an earlier comment of ours that the code or the author's answer does not
+   close is reported again as a follow-up; one that is closed is not reported.
    A finding on the defect of a thread carries `thread` — its id (`T1`, `T2`…). The author's answer to it, in the
    thread or in a general comment, goes verbatim into `authorReply`; a follow-up carries `followUp` — in Russian, why
    that answer does not close the issue. A finding with `thread` and `authorReply` but no `followUp` is dropped as a
