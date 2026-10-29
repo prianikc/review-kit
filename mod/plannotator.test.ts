@@ -52,7 +52,7 @@ test('reconcile: по заголовку, по строке и похожест�
   assert.deepEqual(result.ids, ['A-1', 'B-1', 'h1'])
   assert.equal(result.texts.comments['A-1'], 'Тут null не проверен — перепишите')
   assert.equal(result.findings.at(-1)?.id, 'h1')
-  assert.equal(result.texts.summary, 'Итог\n\nЕщё про весь PR\n\n- src/a.ts:2 (до изменения) — Про удалённую строку\n\n- src/a.ts — Про файл целиком')
+  assert.equal(result.texts.summary, 'Ещё про весь PR\n\n- src/a.ts:2 (до изменения) — Про удалённую строку\n\n- src/a.ts — Про файл целиком')
 })
 
 test('reconcile: dismissed — ничего', () => {

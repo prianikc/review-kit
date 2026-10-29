@@ -1,14 +1,13 @@
 import type { Reply, ReviewDraft } from '../forge/types.ts'
-import { MARKER, type IntakeItem } from '../status.ts'
+import { MARKER } from '../status.ts'
 import type { Finding } from './findings.ts'
 import type { DiscussionThread } from './discussion.ts'
 
 export const APPROVABLE: readonly VerdictName[] = ['Approved', 'Approved with comments']
-const DEFAULT_CHANGES_BODY = 'Нужны правки — см. комментарии.'
+const DEFAULT_CHANGES_BODY = 'Нужны правки.'
 const DEFAULT_EMPTY_BODY = 'Замечаний нет.'
 const UNRESOLVED = ['open', 'partial', 'answered']
 const SETTLED = ['closed', 'accepted']
-const STATUS_WORDS: Record<string, string> = { open: 'не закрыто', partial: 'частично', unknown: 'не проверено', accepted: 'закрыто — принят ответ автора' }
 const QUOTE_LIMIT = 200
 const HUNK = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/
 
@@ -43,13 +42,6 @@ export function undecidedAnswers(statuses: Array<{ id: string; class: string }>)
   return statuses.filter(s => s.class === 'answered').map(s => s.id)
 }
 
-export function statusesBlock(statuses: Array<{ id: string; class: string; reason?: string }>, prior: Array<{ id: string; path: string | null; line: number | null }>): string {
-  const place = new Map(prior.map(p => [p.id, p.path ? `${p.path}:${p.line}` : 'общее']))
-  const count = (name: string) => statuses.filter(s => s.class === name).length
-  const lines = statuses.filter(s => s.class in STATUS_WORDS).map(s => `- ${place.get(s.id) ?? s.id} — ${STATUS_WORDS[s.class]}: ${s.reason ?? ''}`)
-  return [`Прошлые замечания: закрыто ${count('closed') + count('accepted')}, не закрыто ${count('open')}, частично ${count('partial')}.`, ...lines].join('\n')
-}
-
 export function parseCovered(diffU0: string): Map<string, Set<number>> {
   const covered = new Map<string, Set<number>>()
   const state: { file: string | null } = { file: null }
@@ -81,16 +73,16 @@ export function buildDraft({ selected, texts, verdict, approve, covered, capabil
   const body = approve && !selected.length ? '' : parts.filter(Boolean).join('\n\n')
   const comments = inline.map(item => ({ path: item.file, line: item.line, body: texts.comments[item.id] }))
   const draftVerdict = approve ? 'approve' : wantsChanges && capabilities.requestChanges ? 'request-changes' : 'comment'
-  const finalBody = body || (draftVerdict === 'request-changes' ? DEFAULT_CHANGES_BODY : !comments.length && draftVerdict !== 'approve' ? DEFAULT_EMPTY_BODY : '')
+  const finalBody = body || (draftVerdict === 'request-changes' ? (comments.length ? '' : DEFAULT_CHANGES_BODY) : !comments.length && draftVerdict !== 'approve' ? DEFAULT_EMPTY_BODY : '')
   return { draft: { verdict: draftVerdict, body: finalBody, comments }, notes }
 }
 
-export function buildReplies(items: IntakeItem[], replies: Record<string, string>): Reply[] {
+export function buildReplies(items: Array<{ id: string; threadId: string | null; quote: string }>, replies: Record<string, string>): Reply[] {
   const byId = new Map(items.map(item => [item.id, item]))
   const unknown = Object.keys(replies).filter(id => !byId.has(id))
   if (unknown.length) throw new Error(`нет пункта для ответа: ${unknown.join(', ')}`)
   return Object.entries(replies).filter(([, text]) => text.trim()).map(([id, text]) => {
-    const item = byId.get(id) as IntakeItem
+    const item = byId.get(id) as { threadId: string | null; quote: string }
     const body = `${text.trim()}\n\n${MARKER}`
     return item.threadId ? { threadId: item.threadId, body } : { quote: item.quote.split('\n')[0].slice(0, QUOTE_LIMIT), body }
   })

@@ -154,7 +154,7 @@ export function reconcile(decision: Decision, parsed: { items: ParsedItem[]; gen
     extra.push({ id, file: item.file, line: item.line ?? 0, severity: 'minor', confidence: 100, problem: text })
     comments[id] = text
   }
-  const summary = [Object.keys(comments).length ? (texts.summary ?? '').trim() : '', ...body].filter(Boolean).join('\n\n')
+  const summary = body.filter(Boolean).join('\n\n')
   return { ids: Object.keys(comments), texts: { summary, comments }, findings: [...posted, ...extra] }
 }
 

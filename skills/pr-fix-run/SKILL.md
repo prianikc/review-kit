@@ -43,10 +43,9 @@ review-kit:pr-feedback-run first.
 
 ## Replies
 
-For every item write a draft in Russian to `.review-kit/run/<N>/replies.json` = `{"replies": {"<id>": "<text>"}}`: invalid —
-the explanation; question — the answer or a counter-question; out-of-scope — where it went; `fixed` — «Сделано: …» from its
-`reason`; fixed in this round — «Исправлено в <sha>: …», what changed, with the short sha of the round's commit (from
-`pushed: <sha> …`, or `git rev-parse --short HEAD`). Without a reply the thread stays open and the PR keeps the status
+For every item write a draft to `.review-kit/run/<N>/replies.json` = `{"replies": {"<id>": "<text>"}}`: fixed in this round
+or earlier (`fixed`) — exactly «Исправлено»; invalid, question, out-of-scope — «Не исправлено: <one sentence: the reason, the
+answer to the question, or where it went>». No sha, no retelling of the change. Without a reply the thread stays open and the PR keeps the status
 «есть замечания». Show every draft as `<path>:<position>` (or «общий») — text and apply the
 user's edits. Then `replies_publish` with `pr` (it asks the user itself): `published: <n>` → report; `not published: …` →
 show the reason.

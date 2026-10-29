@@ -61,8 +61,9 @@ narrow places), the Plannotator option splits in two: «Plannotator: тольк�
 места гайда». A prompt saying the user typed `/pr-view` skips the question → «Plannotator» with findings only.
 «Не публиковать» → section 4.
 
-Texts: `.review-kit/run/<N>/texts.json` = `{"summary": "<2–4 sentences about the problem, not the author>", "comments":
-{"<id>": "<comment in Russian>"}}`.
+Texts: `.review-kit/run/<N>/texts.json` = `{"comments": {"<id>": "<comment>"}}` — no summary: the review has no general
+comment. A comment is in Russian, one or two short sentences: what is wrong and what to change. No failure scenario, no
+rule quote, no level, no greeting or thanks.
 
 ### Directly
 

@@ -13,7 +13,7 @@ import { annotations, decisionOf, fixResult, hotspotAnnotations, parseMessage, r
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from './guide.ts'
 import { overviewText, triageText } from './run/overview.ts'
 import { discussionOf, type Discussion, type DiscussionThread } from './run/discussion.ts'
-import { APPROVABLE, buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, statusesBlock, undecidedAnswers, type ExplicitVerdict, type Texts, type VerdictName } from './run/review.ts'
+import { APPROVABLE, buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, undecidedAnswers, type ExplicitVerdict, type Texts, type VerdictName } from './run/review.ts'
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
@@ -732,29 +732,34 @@ async function publishReview($: EngineInterface, { pr, ids, from, verdict: asked
   if (unknown.length) return `not published: нет находки: ${unknown.join(', ')}`
   const selected = findings.filter(item => wanted.includes(item.id))
   if (decision === 'annotated' && selected.length === 0) return 'not published: в Plannotator остались только узкие места гайда — это подсказки, публиковать нечего. Свой комментарий — аннотация без строки [gN · узкое место гайда]'
-  const statuses = recheck ? (await readJson<{ items: Array<{ id: string; class: string; reason?: string }> }>($, `${dir}/statuses.json`, { items: [] })).items : []
-  const prior = (await readJson<{ prior: Array<{ id: string; path: string | null; line: number | null }> }>($, `${dir}/recheck.json`, { prior: [] })).prior
+  const statuses = recheck ? (await readJson<{ items: Array<{ id: string; class: string; reason?: string; message?: string }> }>($, `${dir}/statuses.json`, { items: [] })).items : []
+  const prior = (await readJson<{ prior: Array<{ id: string; path: string | null; line: number | null; threadId?: string | null; quote?: string }> }>($, `${dir}/recheck.json`, { prior: [] })).prior
   const undecided = undecidedAnswers(statuses)
   if (undecided.length) {
     const place = new Map(prior.map(p => [p.id, p.path ? `${p.path}:${p.line}` : 'общее']))
     return `not published: автор ответил, а решение по ответу не принято: ${undecided.map(id => place.get(id) ?? id).join(', ')} — спросите пользователя и запишите accepted или open в statuses.json`
   }
-  const summary = [texts.summary?.trim() ?? '', ...(statuses.length ? [statusesBlock(statuses, prior)] : [])].filter(Boolean).join('\n\n')
   const provider = await forge($)
   const covered = parseCovered(await gitText(runner($), ['diff', '-U0', '--no-color', '--no-renames', context.base, context.head]))
   const discussion = await readJson<DiscussionFacts>($, `${dir}/discussion.json`, { threads: [], questions: [], truncated: false })
   const verdict: VerdictName = chosenVerdict({ selected, statuses, decision, verdict: asked, openThreads: openThreads(discussion.threads, statuses).length })
-  const { draft, notes } = buildDraft({ selected, texts: { ...texts, summary }, verdict, approve: APPROVABLE.includes(verdict), covered, capabilities: provider.capabilities })
+  const { draft, notes } = buildDraft({ selected, texts: plannotator ? texts : { comments: texts.comments }, verdict, approve: APPROVABLE.includes(verdict), covered, capabilities: provider.capabilities })
   const bare = draft.verdict === 'approve' && !draft.body.trim() && draft.comments.length === 0
   const inline = draft.comments.map(c => `• ${c.path}:${c.line} — ${c.body}`).join('\n')
-  const question = bare ? `Одобрить PR ${pr} без комментариев?` : `Публикуем ревью PR ${pr} (${verdict})?\n\n${draft.body}\n\n${inline}`.slice(0, CONFIRM_TEXT_LIMIT)
+  const messages = Object.fromEntries(statuses.filter(s => s.message?.trim()).map(s => [s.id, String(s.message)]))
+  const replies = buildReplies(prior.map(p => ({ id: p.id, threadId: p.threadId ?? null, quote: p.quote ?? '' })), messages)
+  const where = new Map(prior.map(p => [p.id, p.path ? `${p.path}:${p.line}` : 'общее']))
+  const answers = Object.keys(messages).length ? `\n\nОтветы автору:\n${Object.entries(messages).map(([id, text]) => `• ${where.get(id) ?? id} — ${text}`).join('\n')}` : ''
+  const question = (bare ? `Одобрить PR ${pr} без комментариев?${answers}` : `Публикуем ревью PR ${pr} (${verdict})?\n\n${draft.body}\n\n${inline}${answers}`).slice(0, CONFIRM_TEXT_LIMIT)
   if (!plannotator) {
     const answer = await $.ui.ask(question, ['Да', 'Нет']).then(choice => ({ choice: String(choice) }), (error: unknown) => ({ error: String(error) }))
     if ('error' in answer) return `not published: окно подтверждения не открылось — ${answer.error} (вердикт ${verdict})`
     if (answer.choice !== 'Да') return `not published: пользователь отказал (вердикт ${verdict})`
   }
   const { url } = await provider.publishReview(pr, draft)
-  return `published: ${url} (вердикт ${verdict})${notes.length ? `\n${notes.join('\n')}` : ''}`
+  const replied = replies.length ? await provider.publishReplies(pr, replies).then(() => [], (error: unknown) => [`ответ автору не отправлен: ${(error as Error).message}`]) : []
+  const tail = [...notes, ...replied]
+  return `published: ${url} (вердикт ${verdict})${tail.length ? `\n${tail.join('\n')}` : ''}`
 }
 
 async function guideSource($: EngineInterface, target: GuideTarget): Promise<GuideSource> {
