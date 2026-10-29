@@ -6,8 +6,8 @@ import { binaryFiles, changedFiles, fileDiff, showFile, snapshot, treeEntries } 
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { applySwitch, claudeCodeChanges, planSwitch } from './git.ts'
-import { branchCandidates, commitRound, deleteBranches, switchToBase, foreignChanges, headShift, messageProblem, pushRound, reviewStashes, roundState, stashAction } from './git.ts'
-import { createReviewWorktree, removeWorktrees, reviewed, shellQuote, withExcluded, worktreeName } from './git.ts'
+import { STASH_GONE, commitRound, deleteBranches, switchBack, foreignChanges, headShift, messageProblem, pushRound, roundState, stashAction } from './git.ts'
+import { createReviewWorktree, leftoverRuns, removeWorktrees, reviewed, shellQuote, withExcluded, worktreeName } from './git.ts'
 import { commitMerge, mergeBase, mergeProblem, operationInProgress } from './git.ts'
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -317,17 +317,15 @@ test('push упал по сети (не non-ff) — повтор только п
   assert.equal(r.git('rev-list', '--count', `${roundBase}..HEAD`), '1')
 })
 
-test('уборка: ветка с непушнутыми коммитами не кандидат; review-stash находится и применяется', async () => {
+test('ветка с непушнутыми коммитами не удаляется; свой stash применяется по sha, второй раз — «не найден»', async () => {
   const { r } = ownRound()
   r.git('switch', '-q', 'main'); r.git('switch', '-qc', 'local-only'); r.commit('z.txt', 'z', 'не на origin'); r.git('switch', '-q', 'main')
-  const candidates = await branchCandidates(r.run, { open: [], closed: [], me: 'alice' })
-  assert.deepEqual(candidates.map(c => [c.name, c.kind]), [['feat', 'no-pr']])
   assert.deepEqual((await deleteBranches(r.run, ['local-only'])).skipped, [{ name: 'local-only', reason: 'есть коммиты, которых нет на origin' }])
   writeFileSync(join(r.dir, 'a.txt'), 'wip'); r.git('stash', 'push', '-q', '-m', 'review-kit: pr-7 test')
-  const [stash] = await reviewStashes(r.run)
-  assert.deepEqual([stash.message, stash.branch], ['review-kit: pr-7 test', 'main'])
-  assert.deepEqual(await stashAction(r.run, stash.sha, 'apply'), { ok: true })
+  const sha = r.git('rev-parse', 'refs/stash')
+  assert.deepEqual(await stashAction(r.run, sha, 'apply'), { ok: true })
   assert.equal(r.git('stash', 'list'), '')
+  assert.deepEqual(await stashAction(r.run, sha, 'apply'), { ok: false, error: STASH_GONE })
 })
 
 test('worktree ревью: PR меняет настройки Claude Code — worktree не создаётся', async () => {
@@ -457,14 +455,20 @@ test('removeWorktrees: изменения в worktree без подтвержд�
   assert.match(result.skipped[0].reason, /есть изменения/)
 })
 
-test('switchToBase: чистое дерево — на main; изменены отслеживаемые файлы — отказ, ветка та же', async () => {
-  const r = repo()
-  r.commit('a.txt', '1', 'base')
-  r.git('switch', '-qc', 'feat'); r.commit('a.txt', '2', 'pr')
-  writeFileSync(join(r.dir, 'a.txt'), 'грязно')
-  assert.match(String(await switchToBase(r.run)), /изменены отслеживаемые файлы/)
-  assert.equal(r.git('branch', '--show-current'), 'feat')
-  r.git('checkout', '-q', '--', 'a.txt')
-  assert.equal(await switchToBase(r.run), undefined)
-  assert.equal(r.git('branch', '--show-current'), 'main')
+test('switchBack: на прежнюю ветку; её нет — на main; на коммит — detached; изменения в дереве — отказ', async () => {
+  const r = repo(); r.commit('a.txt', '1', 'base')
+  r.git('switch', '-qc', 'work'); const work = r.commit('b.txt', '1', 'w')
+  r.git('switch', '-qc', 'review')
+  assert.deepEqual(await switchBack(r.run, 'work'), { on: 'work' })
+  r.git('switch', '-q', 'review')
+  assert.deepEqual(await switchBack(r.run, 'gone'), { on: 'main' })
+  assert.deepEqual(await switchBack(r.run, work), { on: work.slice(0, 7) })
+  r.git('switch', '-q', 'review'); writeFileSync(join(r.dir, 'a.txt'), 'грязно')
+  assert.match(String((await switchBack(r.run, 'work')).problem), /изменены отслеживаемые файлы/)
+  assert.equal(r.git('branch', '--show-current'), 'review')
+})
+
+test('leftoverRuns: только числовые папки, кроме текущего прогона и активных в других сессиях', () => {
+  assert.deepEqual(leftoverRuns(['140', '141', '142', 'notes.md', 'x', '07a'], { current: 141, active: new Set([142]) }), [140])
+  assert.deepEqual(leftoverRuns([], { active: new Set() }), [])
 })
