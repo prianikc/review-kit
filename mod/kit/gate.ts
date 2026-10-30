@@ -1,5 +1,5 @@
 import type { EngineInterface } from 'claude-code'
-import { manifestPaths, type GatedAgent } from '../gate.ts'
+import { manifestPaths, type GatedAgent } from '../manifest.ts'
 import { projectRoot } from './engine.ts'
 import { activeRun } from './state.ts'
 

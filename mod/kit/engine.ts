@@ -16,8 +16,6 @@ export const WORKTREES_EXCLUDE = '/.claude/worktrees/'
 
 export const RUN_FILES_EXCLUDE = '/.review-kit/'
 
-export const TABS_FILE = '.claude/worktrees/orca-tabs.json'
-
 export const STATUS_ARGV = ['git', 'status', '--porcelain', '-uno', '--ignore-submodules=all']
 
 export const SUBMIT_ATTEMPTS = 5

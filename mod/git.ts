@@ -434,7 +434,7 @@ async function prBase(run: Run, baseRef: string, target: string): Promise<string
     const merge = await run(['git', 'merge-base', `origin/${ref}`, target])
     if (merge.exitCode === 0) return (await withMainExcluded(run, { base: merge.stdout.trim(), head: target, baseRef: ref })).base
   }
-  throw new Error(`базу PR не найти (нет ни origin/${baseRef}, ни origin/main) — настройки Claude Code не проверить, вкладку не открываю`)
+  throw new Error(`базу PR не найти (нет ни origin/${baseRef}, ни origin/main) — настройки Claude Code не проверить, worktree не создаю`)
 }
 
 export async function createReviewWorktree(run: Run, input: { root: string; number: number; headRef: string; headSha: string; baseRef: string; pullRef: string; isActive: IsActive }): Promise<{ path: string; created: boolean; executable: string[]; instructions: string[] }> {
@@ -446,7 +446,7 @@ export async function createReviewWorktree(run: Run, input: { root: string; numb
   if (!exists) await gitText(run, ['worktree', 'add', '-q', '--detach', path, target])
   else {
     if (await input.isActive(path, input.number)) throw new Error(`ревью PR ${input.number} уже идёт в ${path} — продолжайте в той вкладке`)
-    if ((await gitText(run, ['-C', path, 'status', '--porcelain', '--ignore-submodules=all'])).trim()) throw new Error(`в worktree ${path} есть изменения — уберите их или удалите worktree («убери вкладку ${input.number}»)`)
+    if ((await gitText(run, ['-C', path, 'status', '--porcelain', '--ignore-submodules=all'])).trim()) throw new Error(`в worktree ${path} есть изменения — уберите их или удалите worktree: git worktree remove ${path}`)
     await gitText(run, ['-C', path, 'switch', '-q', '--detach', target])
   }
   await gitText(run, ['-C', path, 'submodule', 'update', '--init', '-q'])

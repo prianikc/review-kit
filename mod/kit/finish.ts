@@ -2,7 +2,7 @@ import type { EngineInterface } from 'claude-code'
 import { deleteBranches, gitText, inMainTree, removeWorktrees, stashAction, STASH_GONE, switchBack, type Run } from '../git.ts'
 import { projectRoot, runner, readJson } from './engine.ts'
 import { activeRun, runFacts, runDir, READ_ONLY_SCENARIOS, finishRun, isActive } from './state.ts'
-import { mainRoot } from './tabs.ts'
+import { mainRoot } from './worktrees.ts'
 
 export interface RunReturn {
   headRef?: string

@@ -5,10 +5,13 @@ import { overviewText } from '../run/overview.ts'
 import { STATUS_ARGV, SUBMIT_ATTEMPTS, CANCEL, CLEAR, CONTINUE_THERE, CONTINUE_HEAD, projectRoot, submitLater, runner, readJson, type Handoff, type Loaded } from './engine.ts'
 import { ABANDONED_AFTER_MIN, activeRun, runFacts, runDir, openRun, deleteRunDir, foreignRun, type RunScenario, SKILL_OF, handOff, parseSaved, finishRun, isActive, isLive, writeContext } from './state.ts'
 import { roadmapDir, forge } from './forge.ts'
-import { closeTabs } from './tabs.ts'
+
+export const USAGE = 'Использование: /pr [номер PR [review|feedback|fix]] | /pr stop'
+
+export const PR_SCENARIOS = ['review', 'feedback', 'fix'] as const
 
 export const SCENARIO_TEXT = {
-  'none-own': 'Новых замечаний к вашему PR нет — ждём ревью. Ответить на прежние или поправить ещё — /pr-feedback <номер>, /pr-fix <номер>.',
+  'none-own': 'Новых замечаний к вашему PR нет — ждём ревью. Ответить на прежние или поправить ещё — /pr <номер> feedback, /pr <номер> fix.',
   'wait-author': 'Ждём автора: после вашего ревью нет ни новых коммитов, ни ответов в ваших тредах.',
 } as const
 
@@ -17,7 +20,7 @@ export async function resumeRun($: EngineInterface, pr: number, handoff: Handoff
   const text = await $.fs.read(`${dir}/context.json`).then(String, () => '')
   const saved = parseSaved(text)
   if (!saved?.head) return `Прогон PR ${pr} повреждён — выберите «Очистить».`
-  if (saved.scenario === 'recheck') return `Прогон PR ${pr} из прежней версии (перепроверка) — /pr-review stop, затем /pr ${pr}.`
+  if (saved.scenario === 'recheck') return `Прогон PR ${pr} из прежней версии (перепроверка) — /pr stop, затем /pr ${pr}.`
   const head = (await runner($)(['git', 'rev-parse', 'HEAD'])).stdout.trim()
   const shift = await headShift(runner($), { saved: saved.head, head, branch: saved.headRef ?? '' })
   if (shift === 'moved') {
@@ -80,7 +83,6 @@ export async function releaseWorktree($: EngineInterface, { pr, headRef }: { pr:
   const finished = !held.active && !held.dirty
   if (finished) {
     const result = await removeWorktrees(runner($), [held.path], { confirmed: false, isActive: isActive($) })
-    await closeTabs($, result.removed).catch(() => 0)
     if (result.removed.length) return undefined
   }
 
@@ -94,11 +96,10 @@ export async function releaseWorktree($: EngineInterface, { pr, headRef }: { pr:
   if (answer !== CLEAR) return 'Отменено: дерево не тронуто.'
 
   const result = await removeWorktrees(runner($), [held.path], { confirmed: true, isActive: isActive($) })
-  await closeTabs($, result.removed).catch(() => 0)
   return result.removed.length ? undefined : `review-kit: worktree ${held.path} не удалён — ${result.skipped[0]?.reason ?? 'причина неизвестна'}. PR ${pr} не начат.`
 }
 
-export async function dropFinishedTabs($: EngineInterface): Promise<number> {
+export async function dropFinishedWorktrees($: EngineInterface): Promise<number> {
   const run = runner($)
   const provider = await forge($)
   const [open, me] = await Promise.all([provider.listPulls('open'), provider.currentUser()])
@@ -107,7 +108,6 @@ export async function dropFinishedTabs($: EngineInterface): Promise<number> {
   const result = await removeWorktrees(run, trees.map(tree => tree.path), { confirmed: false, isActive: isLive($) })
   const branches = trees.filter(tree => tree.deleteBranch && result.removed.includes(tree.path)).map(tree => tree.branch)
   if (branches.length) await deleteBranches(run, branches)
-  await closeTabs($, result.removed).catch(() => 0)
   return result.removed.length
 }
 
@@ -123,8 +123,8 @@ export async function selfClean($: EngineInterface): Promise<string> {
     const runs = leftoverRuns(names, { active })
     for (const pr of runs) await deleteRunDir($, pr)
     const guides = (await run(['find', `${root}/.review-kit/guide`, '-name', '*.md', '-mmin', `+${ABANDONED_AFTER_MIN}`, '-print', '-delete'])).stdout.split('\n').filter(Boolean).length
-    const tabs = await dropFinishedTabs($).catch(() => 0)
-    const parts = [runs.length ? `папок прогонов ${runs.length}` : '', guides ? `гайдов ${guides}` : '', tabs ? `рабочих копий вкладок ${tabs}` : ''].filter(Boolean)
+    const trees = await dropFinishedWorktrees($).catch(() => 0)
+    const parts = [runs.length ? `папок прогонов ${runs.length}` : '', guides ? `гайдов ${guides}` : '', trees ? `worktree ревью ${trees}` : ''].filter(Boolean)
     return parts.length ? `Убрано за прошлыми прогонами: ${parts.join(', ')}.` : ''
   } catch {
     return ''
@@ -132,14 +132,14 @@ export async function selfClean($: EngineInterface): Promise<string> {
 }
 
 export function closedText(context: PrContext): string {
-  return context.merged ? `PR ${context.number} влит — сценариев нет. Отчёт по нему: /pr-review ${context.number}` : `PR ${context.number} закрыт без слияния — сценариев нет.`
+  return context.merged ? `PR ${context.number} влит — сценариев нет. Отчёт по нему: /pr ${context.number} review` : `PR ${context.number} закрыт без слияния — сценариев нет.`
 }
 
-export async function askAboutActive($: EngineInterface, pr: number | undefined): Promise<string | undefined> {
+export async function askAboutActive($: EngineInterface, pr: number | undefined, handoff: Handoff): Promise<string | undefined> {
   const active = await activeRun($)
   if (active === undefined) return undefined
 
-  if (active === pr) return `Продолжаем PR ${pr}. Начать заново: /pr-review stop, затем /pr ${pr}.`
+  if (active === pr) return `Продолжаем PR ${pr}.${handOff($, pr, handoff, (await runFacts($))?.scenario)}`
 
   const question = `Идёт прогон PR ${active}. Начать PR ${pr}?`
   const answer = await $.ui.ask(question, [`Вернуться к PR ${active}`, `Прервать PR ${active}`]).catch(() => undefined)
@@ -148,13 +148,25 @@ export async function askAboutActive($: EngineInterface, pr: number | undefined)
   return undefined
 }
 
-export async function routePr($: EngineInterface, pr: number | undefined, handoff: Handoff): Promise<string> {
+export type PrScenario = (typeof PR_SCENARIOS)[number]
+
+export function parsePrArgs(arg: string): { stop: true } | { pr?: number; scenario?: PrScenario } | { error: string } {
+  const words = arg.trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return {}
+  if (words.length === 1 && words[0] === 'stop') return { stop: true }
+  const pr = /^\d+$/.test(words[0]) ? Number(words[0]) : NaN
+  const scenario = PR_SCENARIOS.find(name => name === words[1])
+  if (!Number.isInteger(pr) || pr < 1 || words.length > 2 || (words.length === 2 && !scenario)) return { error: USAGE }
+  return scenario ? { pr, scenario } : { pr }
+}
+
+export async function routePr($: EngineInterface, pr: number | undefined, handoff: Handoff, scenario?: PrScenario): Promise<string> {
   const cleaned = await selfClean($)
-  const text = await routeOnce($, pr, handoff)
+  const text = await routeOnce($, pr, handoff, scenario)
   return cleaned ? `${text}\n${cleaned}` : text
 }
 
-export async function routeOnce($: EngineInterface, pr: number | undefined, handoff: Handoff): Promise<string> {
+export async function routeOnce($: EngineInterface, pr: number | undefined, handoff: Handoff, scenario?: PrScenario): Promise<string> {
   if (pr === undefined) {
     const { rows, truncated } = await pullRows(await forge($))
     const active = await activeRun($)
@@ -163,6 +175,12 @@ export async function routeOnce($: EngineInterface, pr: number | undefined, hand
 
   const loaded = await prContext($, pr)
   const { context } = loaded
+  if (scenario === 'review') return startReview($, pr, { loaded, handoff })
+  if (scenario === 'fix') return startFix($, pr, { loaded, handoff, scenario: 'fix' })
+  if (scenario === 'feedback') {
+    if (context.isOwn && intakeItems(loaded.data).length === 0) return `У PR ${pr} нет замечаний. Правки: /pr ${pr} fix`
+    return startFix($, pr, { loaded, handoff, scenario: 'feedback' })
+  }
   if (context.scenario === 'review') return startReview($, pr, { loaded, handoff })
   if (context.scenario === 'feedback') return startFix($, pr, { loaded, handoff, scenario: 'feedback' })
   if (context.scenario === 'recheck') return startReview($, pr, { loaded, handoff })
@@ -186,14 +204,14 @@ export async function startReview($: EngineInterface, pr: number, { loaded, hand
 
 export async function startFix($: EngineInterface, pr: number, { loaded, handoff, scenario }: { loaded: Loaded; handoff: Handoff; scenario: 'feedback' | 'fix' }): Promise<string> {
   const { context } = loaded
-  if (!context.isOwn) return `PR ${pr} не ваш: замечания и правки — только свой PR. Ревью чужого — /pr-review ${pr}.`
+  if (!context.isOwn) return `PR ${pr} не ваш: замечания и правки — только свой PR. Ревью чужого — /pr ${pr}.`
   if (context.state === 'closed') return `PR ${pr} закрыт — правок нет.`
   return startRun($, pr, { loaded, handoff, scenario })
 }
 
 export async function startRun($: EngineInterface, pr: number, { loaded, handoff, scenario }: { loaded: Loaded; handoff: Handoff; scenario: RunScenario }): Promise<string> {
   const { context } = loaded
-  const stop = await askAboutActive($, pr)
+  const stop = await askAboutActive($, pr, handoff)
   if (stop) return stop
 
   if (await foreignRun($, pr)) {
@@ -238,19 +256,18 @@ export async function startRun($: EngineInterface, pr: number, { loaded, handoff
     await $.fs.write(`${dir}/intake.json`, JSON.stringify({ head: context.headSha, items }, null, 2))
     await $.fs.write(`${dir}/overview.md`, overviewText(loaded.data, items))
   }
-  const plannotator = await runner($)(['plannotator', '--version']).then(result => result.exitCode === 0, () => false)
   const roadmap = context.isOwn ? { roadmap: `${await roadmapDir($)}/pr-${pr}-review-fixes.md` } : {}
-  await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, stashSha: saved?.sha ?? null, returnTo, scenario, plannotator, ...roadmap }))
+  await $.fs.write(`${dir}/context.json`, JSON.stringify({ ...context, ...switched, stash, stashSha: saved?.sha ?? null, returnTo, scenario, ...roadmap }))
   await openRun($, { pr, context, head: switched.head, scenario })
   if (scenario === 'conflict') return `PR ${pr} (свой, конфликт): дерево на ${context.headRef}${stash ? `, stash «${stash}»` : ''}.`
   const next = handOff($, pr, handoff, scenario)
 
   if (scenario === 'feedback' || scenario === 'fix') {
-    return `PR ${pr} (свой, ${scenario === 'feedback' ? 'замечания' : 'правки'}): дерево на ${context.headRef}${stash ? `, stash «${stash}»` : ''}. Прогон открыт до конца раунда; закрыть вручную — /pr-${scenario} stop.${next}`
+    return `PR ${pr} (свой, ${scenario === 'feedback' ? 'замечания' : 'правки'}): дерево на ${context.headRef}${stash ? `, stash «${stash}»` : ''}. Прогон открыт до конца раунда; закрыть вручную — /pr stop.${next}`
   }
 
   const who = context.isOwn ? 'свой — только отчёт' : context.state === 'closed' ? 'закрыт — только отчёт' : context.author
-  return `PR ${pr} (${who}): дерево на ${switched.detached ? 'коммите PR' : context.headRef}${stash ? `, stash «${stash}»` : ''}${switched.baseFallback ? `, база ревью — от main: ветка ${context.baseRef} на сервере удалена` : ''}${switched.baseNote ? `, ${switched.baseNote}` : ''}. Прогон открыт до конца ревью; закрыть вручную — /pr-review stop.${next}`
+  return `PR ${pr} (${who}): дерево на ${switched.detached ? 'коммите PR' : context.headRef}${stash ? `, stash «${stash}»` : ''}${switched.baseFallback ? `, база ревью — от main: ветка ${context.baseRef} на сервере удалена` : ''}${switched.baseNote ? `, ${switched.baseNote}` : ''}. Прогон открыт до конца ревью; закрыть вручную — /pr stop.${next}`
 }
 
 export async function startConflict($: EngineInterface, pr: number): Promise<string> {

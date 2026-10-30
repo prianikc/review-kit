@@ -2,7 +2,6 @@ import type { EngineInterface } from 'claude-code'
 import type { PrContext } from '../status.ts'
 import type { IsActive } from '../git.ts'
 import { RUN_FILES_EXCLUDE, SUBMIT_ATTEMPTS, projectRoot, exclude, submitLater, runner, readJson, type Handoff } from './engine.ts'
-import { plannotatorChildren } from './plannotator.ts'
 
 const RUN = { plugin: 'review-kit', key: 'run' } as const
 
@@ -79,7 +78,6 @@ export function parseSaved(text: string): { head?: string; headRef?: string; sce
 }
 
 export async function finishRun($: EngineInterface, pr: number, status: 'done' | 'aborted'): Promise<void> {
-  plannotatorChildren.get(pr)?.stop()
   await $.state.set(RUN, { pr, status, isOwn: false, state: 'closed', head: '' })
   await deleteRunDir($, pr)
 }

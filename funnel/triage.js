@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: 'Разбор' }],
 }
 
-if (!args?.manifestDir) throw new Error('review-kit: разбор запускает /pr-feedback с подготовленным входом')
+if (!args?.manifestDir) throw new Error('review-kit: разбор запускает /pr N feedback с подготовленным входом')
 
 const TRIAGE = {
   type: 'object',

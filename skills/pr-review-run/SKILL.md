@@ -1,13 +1,14 @@
 ---
 name: pr-review-run
-description: Use when review-kit opened a review run for a PR (.review-kit/run/<N>/context.json exists, scenario review) — review it with the agents, report and publish the way the user picks. Not for own fixes.
+description: Use when review-kit opened a review run for a PR (.review-kit/run/<N>/context.json exists, scenario review) — review it with the agents and report. Publishing is review-kit:pr-publish-run. Not for own fixes.
+user-invocable: false
 ---
 
 # pr-review-run
 
 The mod already switched the tree to the PR and opened the run; the agents run on the session's model. Read `.review-kit/run/<N>/context.json`:
 `number`, `title`, `author`, `isOwn`, `state`, `status`, `baseFallback`, `baseNote`. Ask nothing before the review.
-No `context.json` → tell the user to run `/pr-review <N>` and stop.
+No `context.json` → tell the user to run `/pr <N> review` and stop.
 
 ## 1. Review
 
@@ -59,68 +60,10 @@ else: a bug in new code that breaks nothing that worked and does not defeat the 
 style, naming. Non-blocking findings go to the author as TODOs, fixed in a later PR. A finding states the problem, not
 the author. A rule quote stays in the report, never in a published comment.
 
-Own PR (`isOwn`) or closed PR: the report is the result — `review_finish`, stop.
+## 3. Next
 
-## 3. Publish
+Own PR (`isOwn`) or closed PR: the report is the result — `review_finish`, stop. A foreign open PR: use the
+review-kit:pr-publish-run skill for PR <N> right after the report.
 
-A foreign open PR: right after the report, AskUserQuestion «Как публикуем ревью PR <N>?» — «Сразу, без Plannotator»,
-«Открыть с аннотациями в Plannotator», «Не публиковать». When `.review-kit/run/<N>/hotspots.json` has items (the guide's
-narrow places), the Plannotator option splits in two: «Plannotator: только находки» and «Plannotator: находки и узкие
-места гайда». A prompt saying the user typed `/pr-view` skips the question → «Plannotator» with findings only.
-«Не публиковать» → section 4.
-
-Texts: `.review-kit/run/<N>/texts.json` = `{"comments": {"<id>": "<comment>"}}` — no summary: the review has no general
-comment. In Russian, no failure scenario, no rule quote, no level, no greeting or thanks. A blocking comment — one or two
-short sentences: what is wrong and what to change. A non-blocking comment — one sentence, the text of the future TODO;
-the tool prefixes it with «TODO: » itself, never write the prefix.
-
-### Directly
-
-1. List every finding of the three groups, one line each: `<id> · <подтверждена | ниже порога | не подтверждена> ·
-   <блокирует: <category> | не блокирует> · <file>:<line> — <problem>`. Ask in text «Какие публикуем? Номера через запятую или «все»» and end the turn.
-   No findings at all → skip the list, `ids: []`. The user's answer to «Как публикуем?» or to this list may already name
-   the verdict and the ids («апрувим без комментариев» → approve, `ids: []`; «запросить изменения по A-1» → request
-   changes, `ids: ["A-1"]`) — then skip the list.
-2. Write `texts.json` with a comment for each chosen id. No ids chosen → no `texts.json`: the approval goes out bare —
-   no body and no comments anywhere.
-3. `review_publish` with `pr`, `ids`, and `verdict` (`approve` | `request-changes`) whenever the user named one — it
-   overrides the computed verdict. Without it the tool picks the verdict itself: a blocking finding, an open blocking
-   follow-up of an earlier thread → request changes, otherwise approve —
-   but request changes only when something goes to the author (chosen findings or replies); with nothing chosen it
-   approves. An explicit request-changes with nothing chosen is refused (`not published: запрос изменений без
-   комментариев …`) — ask the user to pick findings or approve. It shows the review and asks the user
-   itself → section 4. An approval without chosen findings is published without any text, whatever `texts.json` says.
-   Never tell the user what verdict went out before the tool's answer names it.
-
-### Plannotator
-
-1. Write `texts.json` with a comment for every finding of the three groups; do not show the drafts in chat.
-2. `review_plannotator` with `pr`, and `hotspots: true` when the user chose the narrow places too. `unavailable: …` → show
-   it and go to «Directly».
-3. `started: …` → tell the user the URL: «Отправить аннотации» — запросить изменения с ними, «Approve» — одобрить (оставшиеся
-   аннотации уйдут комментариями), a rewritten comment keeps its first line `[id · …]`. With narrow places also: they are
-   hints for reading, headed `[gN · узкое место гайда]`, and never published while that line stays — to publish one as
-   your own comment, delete that line. End the turn and do nothing until a message «Plannotator result for PR <N>: …»
-   arrives. The user asks meanwhile to add the guide's narrow places → `review_plannotator` with `pr`, `hotspots: true`
-   (it adds them to the open session), show its line, end the turn again.
-4. On it: `failed` → show the reason and go to «Directly». `dismissed` → «Ревью не публикуется: Plannotator закрыт без
-   решения» → section 4. Otherwise `review_publish` with `pr`, `ids` from `.review-kit/run/<N>/plannotator/result.json`
-   (read it with Read; never `cd` into the run folder), `from: "plannotator"` — it publishes without asking → section 4.
-
-## 4. Finish
-
-`published: <url> (вердикт …)` → report the URL and that verdict. An error with «статус публикации неизвестен» → tell the
-user to check the PR before anything else; never publish again. Then `review_finish`.
-
-`not published: пользователь отказал (вердикт <V>)` or `not published: окно подтверждения не открылось — … (вердикт <V>)`
-→ the run stays open: say which verdict the dialog offered, then AskUserQuestion «Что делаем с ревью PR <N>?» —
-«Одобрить» (`verdict: "approve"`), «Запросить изменения» (`verdict: "request-changes"`), «Изменить выбор находок» (back to
-«Directly» step 1), «Не публиковать». A verdict option → `review_publish` again with the same `ids` and that `verdict`, then
-this section again. «Не публиковать» → `review_finish`. `not published: PR обновился после снимка: …` → show it and ask the same question as for «PR изменился во время
-прогона» in section 1. Any other `not published: …` → show the reason, then `review_finish`.
-
-The user does not want to publish → `review_finish`. Every stop of this skill ends with `review_finish`. Never call curl
-or the hosting API; publishing goes only through `review_publish`.
-
-`review_finish` answers with a `worktree … удалён` line when the review ran in its own worktree (a `/pr all` tab): show
-that line as the last thing and call no tools after it — the tab's tree is gone. A `worktree … оставлен` line → show it.
+`review_finish` answers with a `worktree … удалён` line when the review ran in its own review worktree: show that line as
+the last thing and call no tools after it — the tree is gone. A `worktree … оставлен` line → show it.

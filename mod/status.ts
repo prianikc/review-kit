@@ -215,17 +215,13 @@ export function prListText(rows: readonly ListRow[], truncated: boolean): string
   const sections = [
     due.length ? `PR на проверку:\n${due.map(rowLine).join('\n')}` : '',
     waiting.length ? `PR, ожидающие решения:\n${waiting.map(rowLine).join('\n')}` : '',
-    due.length ? 'Взять PR: /pr <номер> · все из «на проверку» сразу: /pr all' : 'Делать нечего.',
+    due.length ? 'Взять PR: /pr <номер>' : 'Делать нечего.',
     truncated ? `Прочитано ${PULL_LIMIT} открытых PR — это предел одного запроса; если PR больше, остальные — /pr <номер>` : '',
   ]
   return sections.filter(Boolean).join('\n\n')
 }
 
-export function placeAll(rows: ReadonlyArray<{ number: number; isOwn: boolean; headRef: string }>, { mainBranch, hasOrca }: { mainBranch: string; hasOrca: boolean }): { tabs: number[]; here: number[] } {
-  const here = rows.filter(row => !hasOrca || (row.isOwn && row.headRef === mainBranch)).map(row => row.number)
-  return { tabs: rows.map(row => row.number).filter(number => !here.includes(number)), here }
-}
-
-export function splitHere(here: readonly number[], running: boolean): { start: number | undefined; later: number[] } {
-  return running ? { start: undefined, later: [...here] } : { start: here[0], later: here.slice(1) }
+export function placeAll(rows: ReadonlyArray<{ number: number; isOwn: boolean; headRef: string }>, { mainTreeBranch }: { mainTreeBranch: string }): { trees: number[]; here: number[] } {
+  const here = rows.filter(row => row.isOwn && row.headRef === mainTreeBranch).map(row => row.number)
+  return { trees: rows.map(row => row.number).filter(number => !here.includes(number)), here }
 }

@@ -1,16 +1,14 @@
 import { update, type Register, type EngineInterface } from 'claude-code'
-import { MAX_RETURNS, parseManifest, parseRole, unreadFiles, type GatedAgent } from './gate.ts'
-import { annotations } from './plannotator.ts'
+import { MAX_RETURNS, parseManifest, parseRole, unreadFiles, type GatedAgent } from './manifest.ts'
 import type { ExplicitVerdict } from './run/review.ts'
 import { projectRoot } from './kit/engine.ts'
 import { activeRun, runFacts, READ_ONLY_SCENARIOS, finishRun } from './kit/state.ts'
 import { SETTINGS } from './kit/forge.ts'
-import { reviewTabs, openAll } from './kit/tabs.ts'
-import { type PlannotatorMode, viewFindings, startPlannotator } from './kit/plannotator.ts'
+import { reviewWorktrees } from './kit/worktrees.ts'
 import { type PrepareKind, type WorkflowId, prepare, collect, prepareGuide } from './kit/workflow.ts'
 import { publishReview, publishReplies, commitPush } from './kit/publish.ts'
 import { finishReview } from './kit/finish.ts'
-import { prContext, routePr, startReview, startFix, startConflict } from './kit/start.ts'
+import { parsePrArgs, routePr, startConflict } from './kit/start.ts'
 import { GUARD_FAILED, readGatedAgent, gateLog, manifestOf } from './kit/gate.ts'
 
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
@@ -22,8 +20,8 @@ function changeGatedAgent($: EngineInterface, agentId: string, change: (agent: G
 const TOOL_SPECS = [
   {
     name: 'review_publish',
-    description: 'Publish the review of the active review-kit run: findings by ids (or "all") — confirmed, below the bar or unconfirmed — with texts from texts.json. From chat the verdict follows the selected findings only (a blocking finding → request changes, otherwise approve; nothing selected → never request changes); verdict: "approve" | "request-changes" — the verdict the user named — overrides that, and an approval without selected findings goes out bare. The tool asks the user itself, publishing only on «Да». from: "plannotator" publishes the Plannotator result without asking (annotated → request changes, approved → approve) and takes no verdict. Refuses when the run has no agent results. Answers "published: <url> (вердикт …)" or "not published: … (вердикт …)" — «пользователь отказал» or «окно подтверждения не открылось».',
-    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, ids: { oneOf: [{ const: 'all' }, { type: 'array', items: { type: 'string' } }] }, from: { enum: ['chat', 'plannotator'] }, verdict: { enum: ['approve', 'request-changes'] } }, required: ['pr', 'ids'] },
+    description: 'Publish the review of the active review-kit run: findings by ids (or "all") — confirmed, below the bar or unconfirmed — with texts from texts.json. From chat the verdict follows the selected findings only (a blocking finding → request changes, otherwise approve; nothing selected → never request changes); verdict: "approve" | "request-changes" — the verdict the user named — overrides that, and an approval without selected findings goes out bare. The tool asks the user itself, publishing only on «Да». source: "ext/<name>" — the folder of an extension inside .review-kit/run/<N>/ with its own findings.json ({"findings"}) and texts.json ({"comments", "summary"?}); ids pick from those findings, summary becomes the review body, verdict is required; the tool still asks «Да/Нет». Refuses when the run has no agent results. Answers "published: <url> (вердикт …)" or "not published: … (вердикт …)" — «пользователь отказал» or «окно подтверждения не открылось».',
+    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, ids: { oneOf: [{ const: 'all' }, { type: 'array', items: { type: 'string' } }] }, source: { type: 'string' }, verdict: { enum: ['approve', 'request-changes'] } }, required: ['pr', 'ids'] },
     isDeferred: false,
   },
   {
@@ -51,12 +49,6 @@ const TOOL_SPECS = [
     isDeferred: false,
   },
   {
-    name: 'review_plannotator',
-    description: 'Open Plannotator for the active review-kit run and wait for the human in the background. mode review (default): posts every finding with its draft text as annotations over the PR diff; mode fix: shows the uncommitted fixes of the round, no annotations. hotspots: true also posts the guide\'s narrow places (.review-kit/run/<N>/hotspots.json) as annotations headed «[gN · узкое место гайда]» — hints that are never published while that header line stays; with a review session already open it only adds them («added: …» / «not added: …»). Answers "started: …" or "unavailable: …"; the decision arrives later as a separate message.',
-    inputSchema: { type: 'object', properties: { pr: { type: 'number' }, mode: { enum: ['review', 'fix'] }, hotspots: { type: 'boolean' } }, required: ['pr'] },
-    isDeferred: false,
-  },
-  {
     name: 'review_prepare',
     description: 'Prepare agent input for the active review-kit run: kind review | feedback | fix-check (fix-check needs paths = the round paths). Answers JSON { workflows: [{ id, scriptPath, args }], notes, overview? } (overview — kind feedback: every comment of the PR, ready to show) — call Workflow with each scriptPath and args; or "review-kit: …" on error.',
     inputSchema: { type: 'object', properties: { pr: { type: 'number' }, kind: { enum: ['review', 'feedback', 'fix-check'] }, paths: { type: 'array', items: { type: 'string' } } }, required: ['pr', 'kind'] },
@@ -69,9 +61,9 @@ const TOOL_SPECS = [
     isDeferred: false,
   },
   {
-    name: 'review_tab',
-    description: 'Open a review of each named PR in its own git worktree and Orca tab (/pr-review N runs there). Without Orca the first review starts in this tree. A PR that changes Claude Code settings, hooks or MCP (.claude/settings*.json, .claude/hooks|agents|commands|skills/, scripts in .claude/, .mcp.json, .claude-plugin/) gets no tab; one that changes only agent instructions (CLAUDE.md, AGENTS.md, .claude/rules/) gets a tab without auto mode. Answers one line per PR.',
-    inputSchema: { type: 'object', properties: { prs: { type: 'array', items: { type: 'number' } } }, required: ['prs'] },
+    name: 'review_worktree',
+    description: 'For extension skills: create a review worktree for each named PR (no prs — for every PR with something to do) and answer JSON { trees: [{ pr, path, command, auto, note? }], here: [pr], skipped: [{ pr, reason }] }. An extension opens a terminal in each path and runs command there (named prs — /pr N review; no prs — /pr N, the scenario by status); the kit itself opens nothing, and without such an extension the worktrees are useless. here — own PRs checked out in the main tree: run /pr N in this tab. A PR that changes Claude Code settings, hooks or MCP is skipped; one that changes only agent instructions gets auto: false. Unused clean worktrees are removed by the next /pr in the main tree.',
+    inputSchema: { type: 'object', properties: { prs: { type: 'array', items: { type: 'number' } } } },
     isDeferred: false,
   },
   {
@@ -82,18 +74,14 @@ const TOOL_SPECS = [
   },
   {
     name: 'review_finish',
-    description: 'Close the active review-kit run for this PR when the review is done. A review that ran in its own review worktree (a /pr all tab) also removes that worktree — the answer then says so, and no command works in this tab afterwards.',
+    description: 'Close the active review-kit run for this PR when the review is done. A review that ran in its own review worktree also removes that worktree — the answer then says so, and no command works in this tab afterwards.',
     inputSchema: { type: 'object', properties: { pr: { type: 'number' } }, required: ['pr'] },
     isDeferred: false,
   },
 ]
 
 const COMMAND_SPECS = [
-  { name: 'pr-review', description: 'Ревью PR в текущей вкладке', argumentHint: '<номер PR> | stop' },
-  { name: 'pr', description: 'Список PR или сценарий для PR N', argumentHint: '[номер PR] | all' },
-  { name: 'pr-feedback', description: 'Разобрать замечания к своему PR', argumentHint: '<номер PR> | stop' },
-  { name: 'pr-fix', description: 'Раунд правок своего PR', argumentHint: '<номер PR> | stop' },
-  { name: 'pr-view', description: 'Открыть находки идущего ревью в Plannotator' },
+  { name: 'pr', description: 'Список PR, сценарий для PR N или stop', argumentHint: '[номер PR [review|feedback|fix]] | stop' },
 ]
 
 export const register: Register = (on, options) => {
@@ -108,68 +96,18 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  for (const scenario of ['feedback', 'fix'] as const) {
-    on('command.run', { command: `pr-${scenario}` }, async ($, e) => {
-      const arg = String(e.args ?? '').trim()
-      if (arg === 'stop') {
-        const active = await activeRun($)
-        if (active === undefined) return { text: 'Активного прогона нет.' }
-        await finishRun($, active, 'aborted')
-        return { text: `Прогон PR ${active} закрыт.` }
-      }
-
-      const pr = Number(arg)
-      if (!Number.isInteger(pr) || pr < 1) return { text: `Использование: /pr-${scenario} <номер PR> | /pr-${scenario} stop` }
-
-      try {
-        return { text: await startFix($, pr, { loaded: await prContext($, pr), handoff: 'submit', scenario }) }
-      } catch (error) {
-        return { text: `review-kit: ${(error as Error).message}` }
-      }
-    })
-  }
-
-  on('command.run', { command: 'pr-review' }, async ($, e) => {
-    const arg = String(e.args ?? '').trim()
-    if (arg === 'stop') {
+  on('command.run', { command: 'pr' }, async ($, e) => {
+    const args = parsePrArgs(String(e.args ?? ''))
+    if ('error' in args) return { text: args.error }
+    if ('stop' in args) {
       const active = await activeRun($)
       if (active === undefined) return { text: 'Активного прогона нет.' }
       await finishRun($, active, 'aborted')
       return { text: `Прогон PR ${active} закрыт.` }
     }
 
-    const pr = Number(arg)
-    if (!Number.isInteger(pr) || pr < 1) return { text: 'Использование: /pr-review <номер PR> | /pr-review stop' }
-
     try {
-      return { text: await startReview($, pr, { loaded: await prContext($, pr), handoff: 'submit' }) }
-    } catch (error) {
-      return { text: `review-kit: ${(error as Error).message}` }
-    }
-  })
-
-  on('command.run', { command: 'pr-view' }, async $ => {
-    try {
-      return { text: await viewFindings($) }
-    } catch (error) {
-      return { text: `review-kit: ${(error as Error).message}` }
-    }
-  })
-
-  on('command.run', { command: 'pr' }, async ($, e) => {
-    const arg = String(e.args ?? '').trim()
-    if (arg === 'all') {
-      try {
-        return { text: await openAll($) }
-      } catch (error) {
-        return { text: `review-kit: ${(error as Error).message}` }
-      }
-    }
-    const pr = arg === '' ? undefined : Number(arg)
-    if (pr !== undefined && (!Number.isInteger(pr) || pr < 1)) return { text: 'Использование: /pr [номер PR] | /pr all' }
-
-    try {
-      return { text: await routePr($, pr, 'submit') }
+      return { text: await routePr($, args.pr, 'submit', args.scenario) }
     } catch (error) {
       return { text: `review-kit: ${(error as Error).message}` }
     }
@@ -206,7 +144,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'mcp__review-kit__review_publish' }, async ($, e) => {
     try {
-      return { result: await publishReview($, e as unknown as { pr: number; ids: string[] | 'all'; from?: 'chat' | 'plannotator'; verdict?: ExplicitVerdict }) }
+      return { result: await publishReview($, e as unknown as { pr: number; ids: string[] | 'all'; source?: string; verdict?: ExplicitVerdict }) }
     } catch (error) {
       return { result: `review-kit: ${(error as Error).message}` }
     }
@@ -238,13 +176,13 @@ export const register: Register = (on, options) => {
     }
   }).catch(() => ({ result: 'review-kit: conflict_start не выполнен' }))
 
-  on('tool.call', { tool: 'mcp__review-kit__review_tab' }, async ($, e) => {
+  on('tool.call', { tool: 'mcp__review-kit__review_worktree' }, async ($, e) => {
     try {
-      return { result: await reviewTabs($, (e as unknown as { prs: number[] }).prs) }
+      return { result: JSON.stringify(await reviewWorktrees($, (e as unknown as { prs?: number[] }).prs)) }
     } catch (error) {
       return { result: `review-kit: ${(error as Error).message}` }
     }
-  }).catch(() => ({ result: 'review-kit: review_tab не выполнен' }))
+  }).catch(() => ({ result: 'review-kit: review_worktree не выполнен' }))
 
   on('tool.call', { tool: 'mcp__review-kit__guide_prepare' }, async ($, e) => {
     try {
@@ -258,15 +196,6 @@ export const register: Register = (on, options) => {
     const { pr } = e as unknown as { pr: number }
     return { result: await finishReview($, pr) }
   })
-
-  on('tool.call', { tool: 'mcp__review-kit__review_plannotator' }, async ($, e) => {
-    const { pr, mode, hotspots } = e as unknown as { pr: number; mode?: PlannotatorMode; hotspots?: boolean }
-    try {
-      return { result: await startPlannotator($, pr, mode === 'fix' ? 'fix' : 'review', hotspots === true) }
-    } catch (error) {
-      return { result: `unavailable: ${(error as Error).message}` }
-    }
-  }).catch(() => ({ result: 'unavailable: review_plannotator не выполнен' }))
 
   on('agent.spawn', async ($, e, next) => {
     const role = parseRole(e.prompt)

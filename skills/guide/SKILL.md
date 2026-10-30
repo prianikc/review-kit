@@ -32,5 +32,5 @@ This is a guide, not a review: no verdict, no levels, no publishing, no tree swi
      attached is named as not covered by the guide.
 4. The answer had `hotspots: <path>` → write that file with Write: `{"items": [{"file": "<path from the repository
    root>", "line": <line in the PR's version of the file>, "text": "<the bullet's what and why, in Russian>"}]}`, one
-   item per «Узкие места» bullet (none → `{"items": []}`). The review may offer them as Plannotator annotations.
+   item per «Узкие места» bullet (none → `{"items": []}`). A publishing extension may show them next to the findings.
 5. Called from another skill or by an agent → the guide is your whole output for this step; return to the caller.
