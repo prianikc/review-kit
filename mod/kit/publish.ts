@@ -8,48 +8,45 @@ import { writeContext } from './state.ts'
 import { forge } from './forge.ts'
 import { staleness } from './workflow.ts'
 
-export async function publishReview($: EngineInterface, { pr, ids, from, verdict: asked }: { pr: number; ids: string[] | 'all'; from?: 'chat' | 'plannotator'; verdict?: ExplicitVerdict }): Promise<string> {
+const EXTENSION_SOURCE = /^ext\/[a-z0-9-]+$/
+
+export async function publishReview($: EngineInterface, { pr, ids, source, verdict: asked }: { pr: number; ids: string[] | 'all'; source?: string; verdict?: ExplicitVerdict }): Promise<string> {
   const { dir, context } = await writeContext($, pr)
   if (context.isOwn || context.state === 'closed') return 'not published: свой или закрытый PR не публикуется — только отчёт'
-  const plannotator = from === 'plannotator'
-  if (plannotator && asked) return 'not published: вердикт при публикации из Plannotator задаёт его решение — verdict не передаётся'
+  if (source !== undefined && !EXTENSION_SOURCE.test(source)) return 'not published: source — только ext/<имя> внутри прогона'
+  if (source !== undefined && !asked) return 'not published: с source нужен verdict — approve или request-changes'
   if (asked && asked !== 'approve' && asked !== 'request-changes') return `not published: неизвестный вердикт ${String(asked)} — approve или request-changes`
   if (!(await $.fs.read(`${dir}/findings.json`).then(() => true, () => false))) return 'not published: в этом прогоне нет результатов агентов (findings.json) — вердикт не из чего считать. Сначала ревью агентами: review_prepare → Workflow → review_collect'
-  const source = plannotator ? `${dir}/plannotator` : dir
-  const stored = await readJson<FindingsResult>($, `${source}/findings.json`, { findings: [], belowBar: [], dropped: [], unconfirmed: [], notChecked: [] })
-  const findings = plannotator ? stored.findings : reviewPool(stored)
-  const texts = await readJson<Texts>($, `${source}/texts.json`, { comments: {} })
-  const decision = plannotator ? (await readJson<{ decision?: string }>($, `${source}/result.json`, {})).decision : undefined
-  if (plannotator && decision !== 'approved' && decision !== 'annotated') return 'not published: нет решения Plannotator (approved или annotated)'
+  const from = source === undefined ? dir : `${dir}/${source}`
+  const stored = await readJson<FindingsResult>($, `${from}/findings.json`, { findings: [], belowBar: [], dropped: [], unconfirmed: [], notChecked: [] })
+  const findings = source === undefined ? reviewPool(stored) : stored.findings
+  const texts = await readJson<Texts>($, `${from}/texts.json`, { comments: {} })
   const wanted = ids === 'all' ? findings.map(item => item.id) : ids
   const unknown = wanted.filter(id => !findings.some(item => item.id === id))
   if (unknown.length) return `not published: нет находки: ${unknown.join(', ')}`
   const selected = findings.filter(item => wanted.includes(item.id))
-  if (decision === 'annotated' && selected.length === 0) return 'not published: в Plannotator остались только узкие места гайда — это подсказки, публиковать нечего. Свой комментарий — аннотация без строки [gN · узкое место гайда]'
   const stale = await staleness($, pr, dir).then(note => ({ note }), (error: unknown) => ({ error: (error as Error).message }))
   if ('error' in stale) return `not published: свежесть PR не проверена — ${stale.error}`
-  if (stale.note) return `not published: PR обновился после снимка: ${stale.note} — перезапустите ревью: /pr-review stop, затем /pr ${pr}`
+  if (stale.note) return `not published: PR обновился после снимка: ${stale.note} — перезапустите ревью: /pr stop, затем /pr ${pr}`
   const provider = await forge($)
   const covered = parseCovered(await gitText(runner($), ['diff', '-U0', '--no-color', '--no-renames', context.base, context.head]))
-  const content = selected.length + (plannotator && texts.summary?.trim() ? 1 : 0)
+  const content = selected.length + (source !== undefined && texts.summary?.trim() ? 1 : 0)
   const chosen = (() => {
     try {
-      return { verdict: chosenVerdict({ selected, decision, verdict: asked, content }) }
+      return { verdict: chosenVerdict({ selected, verdict: asked, content }) }
     } catch (error) {
       return { error: (error as Error).message }
     }
   })()
   if ('error' in chosen) return `not published: ${chosen.error}`
   const verdict: VerdictName = chosen.verdict
-  const { draft, notes } = buildDraft({ selected, texts: plannotator ? texts : { comments: texts.comments }, verdict, approve: APPROVABLE.includes(verdict), covered, capabilities: provider.capabilities })
+  const { draft, notes } = buildDraft({ selected, texts: source !== undefined ? texts : { comments: texts.comments }, verdict, approve: APPROVABLE.includes(verdict), covered, capabilities: provider.capabilities })
   const bare = draft.verdict === 'approve' && !draft.body.trim() && draft.comments.length === 0
   const inline = draft.comments.map(c => `• ${c.path}:${c.line} — ${c.body}`).join('\n')
   const question = bare ? `Одобрить PR ${pr} без комментариев?` : `Публикуем ревью PR ${pr} (${verdict})?\n\n${draft.body}\n\n${inline}`.slice(0, CONFIRM_TEXT_LIMIT)
-  if (!plannotator) {
-    const answer = await $.ui.ask(question, ['Да', 'Нет']).then(choice => ({ choice: String(choice) }), (error: unknown) => ({ error: String(error) }))
-    if ('error' in answer) return `not published: окно подтверждения не открылось — ${answer.error} (вердикт ${verdict})`
-    if (answer.choice !== 'Да') return `not published: пользователь отказал (вердикт ${verdict})`
-  }
+  const answer = await $.ui.ask(question, ['Да', 'Нет']).then(choice => ({ choice: String(choice) }), (error: unknown) => ({ error: String(error) }))
+  if ('error' in answer) return `not published: окно подтверждения не открылось — ${answer.error} (вердикт ${verdict})`
+  if (answer.choice !== 'Да') return `not published: пользователь отказал (вердикт ${verdict})`
   const { url } = await provider.publishReview(pr, draft)
   return `published: ${url} (вердикт ${verdict})${notes.length ? `\n${notes.join('\n')}` : ''}`
 }
@@ -80,7 +77,7 @@ export async function commitPush($: EngineInterface, { pr, message, paths }: { p
   const branch = (await gitText(run, ['branch', '--show-current'])).trim()
   if (branch !== context.headRef) return `not done: дерево на ветке ${branch || '(detached)'}, а PR — ${context.headRef}`
   const session = await readJson<{ roundBase?: string }>($, `${dir}/session.json`, {})
-  if (!session.roundBase) return 'not done: у прогона нет базы раунда — начните раунд заново (/pr-fix)'
+  if (!session.roundBase) return 'not done: у прогона нет базы раунда — начните раунд заново (/pr <номер> fix)'
   const merging = context.scenario === 'conflict'
   const { state, roundBase } = await roundState(run, { branch, roundBase: session.roundBase, message, firstParent: merging })
   if (roundBase !== session.roundBase) await $.fs.write(`${dir}/session.json`, JSON.stringify({ ...session, roundBase }))

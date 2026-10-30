@@ -4,7 +4,7 @@ export const meta = {
   phases: [{ title: 'Поиск' }, { title: 'Опровержение' }],
 }
 
-if (!args?.manifestDir) throw new Error('review-kit: воронку запускает /pr-review с подготовленным входом')
+if (!args?.manifestDir) throw new Error('review-kit: воронку запускает /pr N с подготовленным входом')
 
 const FINDINGS = {
   "type": "object",

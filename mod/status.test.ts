@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ACTIONABLE, commentIds, contextOf, driftOf, rowLine, placeAll, prListText, pullRows, splitHere, statusOf, intakeItems, loadPr, MARKER, scenarioOf, type ListRow, type PrData } from './status.ts'
+import { ACTIONABLE, commentIds, contextOf, driftOf, rowLine, placeAll, prListText, pullRows, statusOf, intakeItems, loadPr, MARKER, scenarioOf, type ListRow, type PrData } from './status.ts'
 import { fakeProvider } from './forge/fake.ts'
 import type { Comment, PullRequest, Review, Thread } from './forge/types.ts'
 
@@ -141,12 +141,12 @@ test('prListText: «на проверку» и «ожидающие решени
   assert.equal(prListText(rows, false), [
     'PR на проверку:\n#1 на проверке · bob — T1\n#2 есть замечания · bob — T2',
     'PR, ожидающие решения:\n#3 ждём автора · bob — T3',
-    'Взять PR: /pr <номер> · все из «на проверку» сразу: /pr all',
+    'Взять PR: /pr <номер>',
   ].join('\n\n'))
 })
 
 test('prListText: только «на проверку» — без пустой секции', () => {
-  assert.equal(prListText([row(1, 'recheck', 'перепроверка')], false), 'PR на проверку:\n#1 перепроверка · bob — T1\n\nВзять PR: /pr <номер> · все из «на проверку» сразу: /pr all')
+  assert.equal(prListText([row(1, 'recheck', 'перепроверка')], false), 'PR на проверку:\n#1 перепроверка · bob — T1\n\nВзять PR: /pr <номер>')
 })
 
 test('prListText: только ожидающие — «Делать нечего.»; пусто — «Открытых PR нет.»; 50 PR — подсказка про предел', () => {
@@ -155,22 +155,15 @@ test('prListText: только ожидающие — «Делать нечег�
   assert.match(prListText([row(1, 'review', 'на проверке')], true), /Прочитано 50 открытых PR/)
 })
 
-test('placeAll: свой PR на ветке основного дерева — здесь, остальное — во вкладки; без Orca — всё здесь', () => {
+test('placeAll: свой PR на ветке основного дерева — здесь, остальное — в worktree', () => {
   const rows = [
     { number: 1, isOwn: false, headRef: 'feat-a' },
     { number: 2, isOwn: true, headRef: 'my-fix' },
     { number: 3, isOwn: true, headRef: 'my-other' },
   ]
-  assert.deepEqual(placeAll(rows, { mainBranch: 'my-fix', hasOrca: true }), { tabs: [1, 3], here: [2] })
-  assert.deepEqual(placeAll(rows, { mainBranch: 'main', hasOrca: true }), { tabs: [1, 2, 3], here: [] })
-  assert.deepEqual(placeAll(rows, { mainBranch: 'feat-a', hasOrca: true }), { tabs: [1, 2, 3], here: [] })
-  assert.deepEqual(placeAll(rows, { mainBranch: 'my-fix', hasOrca: false }), { tabs: [], here: [1, 2, 3] })
-})
-
-test('splitHere: первый запускается здесь, если прогона нет; иначе все — потом', () => {
-  assert.deepEqual(splitHere([2, 5], false), { start: 2, later: [5] })
-  assert.deepEqual(splitHere([2, 5], true), { start: undefined, later: [2, 5] })
-  assert.deepEqual(splitHere([], false), { start: undefined, later: [] })
+  assert.deepEqual(placeAll(rows, { mainTreeBranch: 'my-fix' }), { trees: [1, 3], here: [2] })
+  assert.deepEqual(placeAll(rows, { mainTreeBranch: 'main' }), { trees: [1, 2, 3], here: [] })
+  assert.deepEqual(placeAll(rows, { mainTreeBranch: 'feat-a' }), { trees: [1, 2, 3], here: [] })
 })
 
 test('свой PR с конфликтом → conflict, статус «конфликт», есть дело; замечания важнее', () => {

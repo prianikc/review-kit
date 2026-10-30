@@ -16,13 +16,12 @@ test('verdictName: блокирующая — запрос изменений; �
   assert.equal(verdictName([]), 'Approved')
 })
 
-test('chosenVerdict: явный вердикт пользователя сильнее находок; решение Plannotator; иначе только по выбранным находкам', () => {
+test('chosenVerdict: явный вердикт пользователя сильнее находок; иначе только по выбранным находкам', () => {
   assert.equal(chosenVerdict({ selected: [] }), 'Approved')
   assert.equal(chosenVerdict({ selected: [f('A-1', 'non-blocking')] }), 'Approved with comments')
   assert.equal(chosenVerdict({ selected: [f('A-1', 'blocking')], verdict: 'approve' }), 'Approved with comments')
   assert.equal(chosenVerdict({ selected: [f('A-1', 'non-blocking')], verdict: 'request-changes' }), 'Changes requested')
-  assert.equal(chosenVerdict({ selected: [], decision: 'approved' }), 'Approved')
-  assert.equal(chosenVerdict({ selected: [f('A-1', 'non-blocking')], decision: 'annotated' }), 'Changes requested')
+  assert.equal(chosenVerdict({ selected: [], verdict: 'approve' }), 'Approved')
   assert.equal(chosenVerdict({ selected: [f('A-1', 'blocking')] }), 'Changes requested')
 })
 
@@ -57,8 +56,7 @@ test('chosenVerdict: только по выбранным находкам — �
   assert.equal(chosenVerdict({ selected: [f('A-1', 'blocking')] }), 'Changes requested')
   assert.equal(chosenVerdict({ selected: [] }), 'Approved')
   assert.throws(() => chosenVerdict({ selected: [], verdict: 'request-changes' }), /запрос изменений без комментариев не отправляется/)
-  assert.throws(() => chosenVerdict({ selected: [], decision: 'annotated' }), /запрос изменений без комментариев не отправляется/)
-  assert.equal(chosenVerdict({ selected: [], decision: 'annotated', content: 1 }), 'Changes requested')
+  assert.equal(chosenVerdict({ selected: [], verdict: 'request-changes', content: 1 }), 'Changes requested')
 })
 
 test('buildDraft: request changes с пустым телом — «Нужны правки.», с комментариями к строкам и без (Forgejo требует тело)', () => {

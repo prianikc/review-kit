@@ -23,9 +23,9 @@ export function verdictName(findings: Array<{ severity: string }>): VerdictName 
   return findings.length ? 'Approved with comments' : 'Approved'
 }
 
-export function chosenVerdict({ selected, decision, verdict, content = selected.length }: { selected: Array<{ severity: string }>; decision?: string; verdict?: ExplicitVerdict; content?: number }): VerdictName {
-  if (verdict === 'approve' || decision === 'approved') return selected.length ? 'Approved with comments' : 'Approved'
-  if (verdict === 'request-changes' || decision === 'annotated') {
+export function chosenVerdict({ selected, verdict, content = selected.length }: { selected: Array<{ severity: string }>; verdict?: ExplicitVerdict; content?: number }): VerdictName {
+  if (verdict === 'approve') return selected.length ? 'Approved with comments' : 'Approved'
+  if (verdict === 'request-changes') {
     if (content === 0) throw new Error(EMPTY_CHANGES)
     return 'Changes requested'
   }

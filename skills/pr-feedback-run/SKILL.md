@@ -1,12 +1,13 @@
 ---
 name: pr-feedback-run
-description: Use when review-kit opened a feedback run for the user's own PR (.review-kit/run/<N>/context.json with scenario feedback exists).
+description: Use when review-kit opened a feedback run for the user's own PR (.review-kit/run/<N>/context.json with scenario feedback exists) — triage the reviewers' comments.
+user-invocable: false
 ---
 
 # pr-feedback-run
 
-Read `.review-kit/run/<N>/context.json` (`status`, `plannotator`) and `.review-kit/run/<N>/intake.json`. No `context.json`
-→ tell the user to run `/pr-feedback <N>` and stop. Empty `items` → «Замечаний нет», `review_finish`, stop.
+Read `.review-kit/run/<N>/context.json` (`status`) and `.review-kit/run/<N>/intake.json`. No `context.json`
+→ tell the user to run `/pr <N> feedback` and stop. Empty `items` → «Замечаний нет», `review_finish`, stop.
 
 ## 1. Triage
 
@@ -33,7 +34,6 @@ Read `.review-kit/run/<N>/context.json` (`status`, `plannotator`) and `.review-k
 нужен ответ | вне задачи>: <reason>`. No hosting ids anywhere the user reads.
 
 AskUserQuestion «Что делаем?» — «Чиним (ответы на остальное — в конце)», «Только ответить».
-- «Чиним» → review-kit:pr-fix-run from its step 0 (it checks Plannotator and superpowers first); the run stays open.
-  Every `valid` item has `fixed` and there is no `todo` → nothing to change: go straight to «Replies» of
-  review-kit:pr-fix-run.
-- «Только ответить» → «Replies» of review-kit:pr-fix-run, then `review_finish`.
+- «Чиним» → review-kit:pr-fix-run from its step 1; the run stays open. Every `valid` item has `fixed` and there is no
+  `todo` → nothing to change: go straight to review-kit:pr-replies-run.
+- «Только ответить» → review-kit:pr-replies-run.

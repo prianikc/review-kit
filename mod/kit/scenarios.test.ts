@@ -6,6 +6,8 @@ import { finishReview } from './finish.ts'
 import { useProviderForTests } from './forge.ts'
 import { commitPush, publishReview } from './publish.ts'
 import { routePr, selfClean } from './start.ts'
+import { runFacts } from './state.ts'
+import { reviewWorktrees } from './worktrees.ts'
 import { fakeEngine } from '../testing/engine.ts'
 import { repo } from '../testing/repo.ts'
 import { fakeProvider } from '../forge/fake.ts'
@@ -97,6 +99,63 @@ test('review_publish: устаревший снимок — отказ до во
   assert.match(await publishReview($, { pr: 7, ids: [] }), /вердикт Approved\)$/)
   assert.equal(asked.at(-1), 'Одобрить PR 7 без комментариев?')
   assert.equal(provider.published[1].draft.verdict, 'approve')
+})
+
+test('review_publish из расширения: source вне ext/ — отказ до вопроса; ext/x — спрашивает и публикует summary', async () => {
+  const { r, provider } = prRepo()
+  const { $, asked } = fakeEngine({ root: r.dir, answers: ['Нет', 'Да'] })
+  await routePr($, 7, 'return')
+  const dir = join(r.dir, '.review-kit/run/7')
+  const finding = { id: 'A-1', role: 'correctness', file: 'b.txt', line: 1, severity: 'non-blocking', confidence: 90, problem: 'p', failureScenario: 's', verdict: 'confirmed' }
+  writeFileSync(join(dir, 'findings.json'), JSON.stringify({ findings: [], belowBar: [], dropped: [], unconfirmed: [], notChecked: [] }))
+  mkdirSync(join(dir, 'ext/x'), { recursive: true })
+  writeFileSync(join(dir, 'ext/x/findings.json'), JSON.stringify({ findings: [finding] }))
+  writeFileSync(join(dir, 'ext/x/texts.json'), JSON.stringify({ comments: { 'A-1': 'поправь' }, summary: 'Итог расширения' }))
+  assert.match(await publishReview($, { pr: 7, ids: 'all', source: '../7', verdict: 'request-changes' }), /^not published: source/)
+  assert.match(await publishReview($, { pr: 7, ids: 'all', source: '/tmp/x', verdict: 'request-changes' }), /^not published: source/)
+  assert.match(await publishReview($, { pr: 7, ids: 'all', source: 'ext/x' }), /^not published: с source нужен verdict/)
+  assert.deepEqual(asked, [])
+  assert.equal(await publishReview($, { pr: 7, ids: 'all', source: 'ext/x', verdict: 'request-changes' }), 'not published: пользователь отказал (вердикт Changes requested)')
+  assert.match(await publishReview($, { pr: 7, ids: ['A-1'], source: 'ext/x', verdict: 'request-changes' }), /^published: /)
+  assert.match(provider.published[0].draft.body, /Итог расширения/)
+  assert.equal(asked.length, 2)
+})
+
+test('/pr N fix: чужой PR — отказ, дерево не тронуто; свой — прогон fix', async () => {
+  const foreign = prRepo()
+  const one = fakeEngine({ root: foreign.r.dir })
+  assert.match(await routePr(one.$, 7, 'return', 'fix'), /не ваш/)
+  assert.equal(foreign.r.git('branch', '--show-current'), 'main')
+  assert.deepEqual(one.asked, [])
+
+  const own = prRepo({ author: 'alice' })
+  const two = fakeEngine({ root: own.r.dir })
+  assert.match(await routePr(two.$, 7, 'return', 'fix'), /правки/)
+  assert.equal((await runFacts(two.$))?.scenario, 'fix')
+})
+
+test('/pr N feedback без замечаний — отказ без переключения; /pr N review своего — только отчёт', async () => {
+  const { r } = prRepo({ author: 'alice' })
+  const { $ } = fakeEngine({ root: r.dir })
+  assert.equal(await routePr($, 7, 'return', 'feedback'), 'У PR 7 нет замечаний. Правки: /pr 7 fix')
+  assert.equal(r.git('branch', '--show-current'), 'main')
+  assert.match(await routePr($, 7, 'return', 'review'), /свой — только отчёт/)
+  assert.equal((await runFacts($))?.scenario, 'review')
+})
+
+test('/pr N второй раз в той же сессии — прогон продолжается тем же скиллом', async () => {
+  const { r } = prRepo()
+  const { $ } = fakeEngine({ root: r.dir })
+  await routePr($, 7, 'return')
+  assert.match(await routePr($, 7, 'return'), /Use the review-kit:pr-review-run skill for PR 7/)
+})
+
+test('review_worktree: явные номера — в дереве ревью (/pr N review), без номеров — сценарий по статусу', async () => {
+  const { r } = prRepo()
+  const { $ } = fakeEngine({ root: r.dir })
+  const named = await reviewWorktrees($, [7])
+  assert.equal(named.trees.length, 1)
+  assert.match(named.trees[0].command, /'\/pr 7 review'$/)
 })
 
 test('selfClean: живой прогон не тронут, брошенные папки и старые гайды убраны', async () => {
