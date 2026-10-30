@@ -1,6 +1,6 @@
 {
   "name": "review-kit",
-  "version": "7.0.2",
+  "version": "8.0.0",
   "description": "Ревью PR воронкой агентов с учётом истории ревью, разбор замечаний к своему PR и раунд правок — в текущей вкладке",
   "author": { "name": "prianikc" },
   "types": "./types/index.d.ts",
