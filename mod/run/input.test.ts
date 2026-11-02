@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildInput, fenced, fileStates, inputLimit, itemsSection, lineCount, manifestText, MAX_INPUT_CHARS, notAttached } from './input.ts'
+import { buildInput, fenced, fileStates, itemsSection, lineCount, manifestText, notAttached } from './input.ts'
 import { repo } from '../testing/repo.ts'
 
 test('fileStates: удалён, бинарный, большой файл не приложен', async () => {
@@ -27,7 +27,7 @@ test('lineCount как splitlines, fenced длиннее бэктиков вну
   assert.equal(fenced('x ```` y'), '`````\nx ```` y\n`````')
 })
 
-test('buildInput: разделы RULES/DIFF/FILES и ITEMS; лимит входа', async () => {
+test('buildInput: разделы RULES/DIFF/FILES и ITEMS; текст правил во вход не идёт', async () => {
   const r = repo()
   const base = r.commit('a.ts', '1\n', 'base')
   const head = r.commit('a.ts', '2\n', 'head')
@@ -38,7 +38,7 @@ test('buildInput: разделы RULES/DIFF/FILES и ITEMS; лимит вход�
   assert.match(text, /## DIFF\n```diff\n[\s\S]*\+2/)
   assert.match(text, /## FILES\n=== FILE: a.ts ===\n```\n2\n\n```/)
   assert.match(text, /## ITEMS\n### i1 — a.ts:1 — carol \(stale\)\nпочему 2\?/)
-  assert.ok((await buildInput(r.run, { base, head, rules: new Map([['CLAUDE.md', 'x'.repeat(MAX_INPUT_CHARS)]]) })).length < 1000)
+  assert.ok((await buildInput(r.run, { base, head, rules: new Map([['CLAUDE.md', 'x'.repeat(500_000)]]) })).length < 1000)
 })
 
 test('buildInput: DISCUSSION — между RULES и DIFF', async () => {
@@ -49,21 +49,15 @@ test('buildInput: DISCUSSION — между RULES и DIFF', async () => {
   assert.match(text, /No rule files apply to this PR\.\n\n## DISCUSSION\nобсуждения нет\n\n## DIFF/)
 })
 
-test('inputLimit: opus — 500 000, остальные и без модели — 250 000', () => {
-  assert.equal(inputLimit('opus'), 500_000)
-  assert.equal(inputLimit('sonnet'), MAX_INPUT_CHARS)
-  assert.equal(inputLimit('haiku'), 250_000)
-  assert.equal(inputLimit(), 250_000)
-})
-
-test('buildInput: лимит по модели — 300 000 проходит на opus, на sonnet отказ с подсказкой', async () => {
+test('buildInput: без лимита входа и диффа — большой вход и дифф файла больше 60 000 символов приложены', async () => {
   const r = repo()
   const base = r.commit('a.ts', '1\n', 'base')
-  for (const name of ['b.ts', 'c.ts', 'd.ts']) r.commit(name, `${'y'.repeat(59_000)}\n`, name)
-  const head = r.git('rev-parse', 'HEAD')
-  const rules = new Map<string, string>()
-  assert.ok((await buildInput(r.run, { base, head, rules, model: 'opus' })).length > 300_000)
-  await assert.rejects(buildInput(r.run, { base, head, rules, model: 'sonnet' }), /больше лимита 250000 для модели sonnet \(у opus — 500000\): в дельте 3 файл\(ов\)/)
+  for (const name of ['b.ts', 'c.ts', 'd.ts', 'e.ts', 'f.ts', 'g.ts', 'h.ts', 'i.ts', 'j.ts']) r.commit(name, `${'y'.repeat(59_000)}\n`, name)
+  const head = r.commit('big.ts', `${'z'.repeat(70_000)}\n`, 'big')
+  const text = await buildInput(r.run, { base, head, rules: new Map() })
+  assert.ok(text.length > 500_000)
+  assert.match(text, /\+z{70000}/)
+  assert.doesNotMatch(text, /дифф не приложен/)
 })
 
 test('buildInput: scope — только файлы, которые PR меняет от базы', async () => {
