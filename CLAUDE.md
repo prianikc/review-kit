@@ -12,7 +12,7 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 | `.claude-plugin/` | манифест (`plugin.json`: версия, `userConfig`) и `marketplace.json` |
 | `hooks/hooks.json` | подключает мод `mod/register.ts` |
 | `mod/register.ts` | описания команды `/pr` и инструментов, подключение хуков (логика — в `mod/kit/`), хуки гейта агентов |
-| `mod/kit/` | логика мода: `engine` (общие опоры), `state` (прогон), `forge` (хостинг и конфиг), `start` (старт, stash, самоочистка), `workflow` (вход агентам, сбор), `publish` (ревью, ответы, commit+push), `finish` (`review_finish`), `worktrees` (`review_worktree`), `gate`; сценарные тесты — `scenarios.test.ts` |
+| `mod/kit/` | логика мода: `engine` (общие опоры), `state` (прогон), `forge` (хостинг и конфиг), `start` (старт, stash, самоочистка), `workflow` (вход агентам, сбор), `publish` (ревью, ответы, commit+push), `finish` (`review_finish`), `worktrees` (`review_worktree`), `gate`, `band` (кнопка PR над промптом); сценарные тесты — `scenarios.test.ts` |
 | `mod/testing/` | опоры тестов: `repo.ts` (git во временной папке), `engine.ts` (фейковый движок) |
 | `mod/forge/` | модель хостинга (`types.ts`), выбор адаптера и токена (`index.ts`), адаптеры (`forgejo.ts`), фейк для тестов |
 | `mod/status.ts` | сценарий и статус PR, intake замечаний |
