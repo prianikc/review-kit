@@ -3,8 +3,6 @@ import { RULE_SOURCES } from './rules.ts'
 
 export const MAX_FILE_CHARS = 60_000
 export const DELETED = 'удалён'
-export const MAX_INPUT_CHARS = 250_000
-const MODEL_INPUT_CHARS: Record<string, number> = { opus: 500_000 }
 export const B_SKIPPED = `агент B не запускался: правил Claude Code для файлов PR нет (${RULE_SOURCES})`
 
 export interface FileState {
@@ -68,30 +66,20 @@ export function itemsSection(items: TriageItem[]): string {
   return `## ITEMS\n${blocks.join('\n\n')}`
 }
 
-export function inputLimit(model?: string): number {
-  return MODEL_INPUT_CHARS[model ?? ''] ?? MAX_INPUT_CHARS
-}
-
-export async function buildInput(run: Run, { base, head, rules, items, scope, model, discussion }: { base: string; head: string; rules: Map<string, string>; items?: TriageItem[]; scope?: string; model?: string; discussion?: string }): Promise<string> {
+export async function buildInput(run: Run, { base, head, rules, items, scope, discussion }: { base: string; head: string; rules: Map<string, string>; items?: TriageItem[]; scope?: string; discussion?: string }): Promise<string> {
   const rulesText = rules.size
     ? `Rule files apply to this PR. Read each whole from your manifest — the copy is \`rules/<path>\` next to this input; cite it by <path>.\n${[...rules.keys()].map(path => `=== RULE FILE: ${path} ===`).join('\n')}`
     : 'No rule files apply to this PR.'
   const inPr = scope ? new Set(await changedFiles(run, scope, head)) : undefined
   const all = (await changedFiles(run, base, head)).filter(path => !inPr || inPr.has(path))
   const changed = items ? all : reviewed(all)
-  const diffs = await Promise.all(changed.map(async path => {
-    const diff = await fileDiff(run, base, head, path)
-    return diff.length > MAX_FILE_CHARS ? `--- ${path} (дифф не приложен: больше ${MAX_FILE_CHARS} символов)\n` : diff
-  }))
+  const diffs = await Promise.all(changed.map(path => fileDiff(run, base, head, path)))
   if (changed.length < all.length) diffs.push(`--- .claude/ (не ревьюится: ${all.length - changed.length} файл(ов))\n`)
   const states = await fileStates(run, base, head, changed)
   const skipped = notAttached(states)
   const files = [...states].map(([path, state]) => (skipped.has(path) ? `=== FILE: ${path} === (не приложен: ${skipped.get(path)})` : `=== FILE: ${path} ===\n${fenced(state.text ?? '')}`)).join('\n\n')
   const sections = [`## RULES\n${rulesText}`, ...(discussion ? [discussion] : []), `## DIFF\n${fenced(diffs.join(''), 'diff')}`, `## FILES\n${files}`, ...(items ? [itemsSection(items)] : [])]
-  const text = `${sections.join('\n\n')}\n`
-  const limit = inputLimit(model)
-  if (text.length > limit) throw new Error(`вход ${text.length} символов больше лимита ${limit}${model ? ` для модели ${model}` : ''}${limit < inputLimit('opus') ? ` (у opus — ${inputLimit('opus')})` : ''}: в дельте ${changed.length} файл(ов). Ревью одним запросом не делается: разделите PR или проверьте его частями вручную`)
-  return text
+  return `${sections.join('\n\n')}\n`
 }
 
 export function manifestText(paths: string[], notes: string[]): string {
