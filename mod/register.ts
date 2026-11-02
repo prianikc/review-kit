@@ -10,6 +10,7 @@ import { publishReview, publishReplies, commitPush } from './kit/publish.ts'
 import { finishReview } from './kit/finish.ts'
 import { parsePrArgs, routePr, startConflict } from './kit/start.ts'
 import { GUARD_FAILED, readGatedAgent, gateLog, manifestOf } from './kit/gate.ts'
+import { registerBand } from './kit/band.ts'
 
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
 
@@ -267,4 +268,6 @@ export const register: Register = (on, options) => {
     }
     return next(e)
   }).catch(($, e, next) => next(e))
+
+  registerBand(on)
 }
