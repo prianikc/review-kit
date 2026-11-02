@@ -13,25 +13,30 @@ Object.assign(globalThis, {
 })
 
 function setup(run: (input: unknown) => Promise<unknown> = async () => undefined) {
-  const hooks: Hook[] = []
+  const hooks: Record<string, { matcher: unknown; hook: Hook }> = {}
   const runs: unknown[] = []
   const toasts: string[] = []
-  registerBand(((_event: string, _matcher: unknown, hook: Hook) => {
-    hooks.push(hook)
+  registerBand(((event: string, matcher: unknown, hook: Hook) => {
+    hooks[event] = { matcher, hook }
     return { catch: () => undefined }
   }) as never)
   const $ = {
     ui: { resolve: () => ({ Box: tag('Box'), Button: tag('Button'), Text: tag('Text') }), toast: (text: string) => { toasts.push(text) } },
     command: { run: async (input: unknown) => { runs.push(input); return run(input) } },
   }
-  const render = (hasSurvey: boolean) => hooks[0]($, { props: { hasSurvey } }, async () => BELOW)
+  const render = (hasSurvey: boolean) => hooks['ui.render'].hook($, { props: { hasSurvey } }, async () => BELOW)
   const press = async () => {
-    const tree = (await render(false)) as Node
-    ;((tree.children.at(-1) as Node).props?.onPress as () => void)()
+    const answer = await hooks['ui.press'].hook($, { plugin: 'review-kit', element: 'pr' }, async () => ({ element: 'pr' }))
     await new Promise(resolve => setImmediate(resolve))
+    return answer
   }
-  return { render, press, runs, toasts }
+  return { hooks, render, press, runs, toasts }
 }
+
+test('полоса: нажатие ловит хук ui.press своей кнопки', () => {
+  const { hooks } = setup()
+  assert.deepEqual(hooks['ui.press'].matcher, { plugin: 'review-kit', element: 'pr' })
+})
 
 test('полоса: кнопка PR справа от того, что рисуют другие плагины', async () => {
   const { render } = setup()
@@ -41,11 +46,12 @@ test('полоса: кнопка PR справа от того, что рису�
   const button = tree.children.at(-1) as Node
   assert.equal(button.tag, 'Button')
   assert.deepEqual({ key: button.props?.key, label: button.props?.label, hotkey: button.props?.hotkey }, { key: 'pr', label: 'PR', hotkey: 'r' })
+  assert.equal(typeof button.props?.onPress, 'function')
 })
 
-test('полоса: нажатие запускает /pr', async () => {
+test('полоса: нажатие запускает /pr и забирает его', async () => {
   const { press, runs, toasts } = setup()
-  await press()
+  assert.deepEqual(await press(), { element: 'pr' })
   assert.deepEqual(runs, [{ command: 'pr' }])
   assert.deepEqual(toasts, [])
 })
