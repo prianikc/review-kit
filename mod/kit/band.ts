@@ -1,5 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
-import { backToMain, backgroundTreesRoot, listAgents, openReview, reviewButtons, type BackgroundMarker, type ReviewButton } from './background.ts'
+import { backToMain, backgroundTreesRoot, dropFinishedSessions, listAgents, openReview, reviewButtons, type BackgroundMarker, type ReviewButton } from './background.ts'
+import { projectRoot } from './engine.ts'
 
 const PR_BUTTON = 'pr'
 const REVIEW_PREFIX = 'review:'
@@ -65,7 +66,11 @@ export function registerBand(on: On): void {
     const button = e.element.startsWith(REVIEW_PREFIX) ? buttons.find(item => `${REVIEW_PREFIX}${item.pr}` === e.element) : undefined
     if (button) void openReview($, button).then(async opened => { if (opened) await $.state.set(REVIEWS, { ...(await readReviews($)), back: opened }) })
       .catch(error => $.ui.toast(`review-kit: ревью PR ${button.pr} не открылось: ${String(error)}`))
-    else if (e.element === BACK_BUTTON && back) void backToMain($, back).then(async done => { if (done) await $.state.set(REVIEWS, { buttons: (await readReviews($)).buttons }) })
+    else if (e.element === BACK_BUTTON && back) void backToMain($, back).then(async done => {
+      if (!done) return
+      await $.state.set(REVIEWS, { buttons: (await readReviews($)).buttons })
+      await dropFinishedSessions($, await projectRoot($)).catch(error => $.ui.log(`review-kit: фоновые сессии не убраны: ${String(error)}`))
+    })
     else return next(e)
     return { element: e.element }
   }).catch(($, e, next) => next(e))

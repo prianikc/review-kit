@@ -159,15 +159,16 @@ test('кнопки: метка другого PR в дереве — не наш
   assert.deepEqual(await reviewButtons($, [agent(7, reviewTree(8, { verdict: 'changes' }))]), [])
 })
 
-test('review_finish в дереве фонового ревью: дерево оставлено до следующего /pr', async () => {
+test('review_finish в дереве фонового ревью: дерево удалено сразу, подсказка про «← назад»', async () => {
   const r = repo(); r.commit('a.txt', '1', 'base')
   const tree = join(r.dir, '.claude/worktrees/pr-7-feat')
   r.git('worktree', 'add', '-q', '--detach', tree)
+  writeFileSync(join(r.dir, '.git/info/exclude'), '.review-kit/\n')
   mkdirSync(join(tree, '.review-kit'), { recursive: true })
   writeFileSync(join(tree, '.review-kit/background.json'), JSON.stringify({ pr: 7, mainSessionId: 'main-id' }))
   const { $ } = fakeEngine({ root: tree })
-  assert.match(await dropReviewWorktree($) ?? '', /оставлен: ревью шло в фоне — уберётся при следующем \/pr в основном дереве/)
-  assert.ok(existsSync(tree))
+  assert.match(await dropReviewWorktree($) ?? '', /worktree .* удалён — ревью закончено; вернитесь в основную сессию кнопкой «← назад»/)
+  assert.equal(existsSync(tree), false)
 })
 
 test('после воронки: /color откладывается на потом, не из хука инструмента', async () => {
