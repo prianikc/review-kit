@@ -40,6 +40,14 @@ export async function openRun($: EngineInterface, { pr, context, head, scenario 
   await $.state.set(RUN, { pr, status: 'active', isOwn: context.isOwn, state: context.state, head, scenario })
 }
 
+export async function adoptRun($: EngineInterface, pr: number): Promise<void> {
+  const dir = await runDir($, pr)
+  const context = JSON.parse(String(await $.fs.read(`${dir}/context.json`))) as { isOwn?: boolean; state?: string; head?: string; scenario?: RunScenario }
+  const session = await readJson<Record<string, unknown>>($, `${dir}/session.json`, {})
+  await $.fs.write(`${dir}/session.json`, JSON.stringify({ ...session, sessionId: await $.session.id(), status: 'active' }))
+  await $.state.set(RUN, { pr, status: 'active', isOwn: context.isOwn ?? false, state: context.state ?? 'open', head: context.head ?? '', scenario: context.scenario ?? 'review' })
+}
+
 export async function deleteRunDir($: EngineInterface, pr: number): Promise<void> {
   if (Number.isInteger(pr) && pr > 0) await runner($)(['rm', '-rf', await runDir($, pr)])
 }
@@ -61,8 +69,12 @@ export const READ_ONLY_SCENARIOS: readonly RunScenario[] = ['review']
 
 export const SKILL_OF: Record<RunScenario, string> = { review: 'pr-review-run', feedback: 'pr-feedback-run', fix: 'pr-fix-run', conflict: 'pr-confl' }
 
+export function skillText(pr: number, skill: string): string {
+  return `Use the review-kit:${skill} skill for PR ${pr}; context: .review-kit/run/${pr}/context.json`
+}
+
 export function handOff($: EngineInterface, pr: number, handoff: Handoff, scenario: RunScenario = 'review'): string {
-  const text = `Use the review-kit:${SKILL_OF[scenario]} skill for PR ${pr}; context: .review-kit/run/${pr}/context.json`
+  const text = skillText(pr, SKILL_OF[scenario])
   if (handoff === 'return') return ` ${text}`
 
   submitLater($, text, SUBMIT_ATTEMPTS)

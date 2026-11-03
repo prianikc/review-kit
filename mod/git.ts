@@ -105,6 +105,11 @@ async function hasRef(run: Run, ref: string): Promise<boolean> {
   return (await run(['git', 'rev-parse', '-q', '--verify', ref])).exitCode === 0
 }
 
+async function worktreeList(run: Run): Promise<string> {
+  await run(['git', 'worktree', 'prune'])
+  return gitText(run, ['worktree', 'list', '--porcelain'])
+}
+
 function holderOf(porcelain: string, branch: string): string {
   const rows = porcelain.split('\n')
   const at = rows.indexOf(`branch refs/heads/${branch}`)
@@ -142,7 +147,7 @@ async function mergedBase(run: Run, final: string, baseTip: string): Promise<str
 }
 
 export async function planSwitch(run: Run, input: SwitchInput): Promise<SwitchPlan> {
-  const busy = holderOf(await gitText(run, ['worktree', 'list', '--porcelain']), input.headRef)
+  const busy = holderOf(await worktreeList(run), input.headRef)
   const root = (await gitText(run, ['rev-parse', '--show-toplevel'])).trim()
   if (busy && busy !== root) throw new Error(`ветка ${input.headRef} занята worktree ${busy}`)
   const { target, detached } = await fetchHead(run, input)
@@ -323,7 +328,7 @@ async function allOnOrigin(run: Run, ref: string): Promise<boolean> {
 }
 
 async function busyBranches(run: Run): Promise<Set<string>> {
-  return new Set((await gitText(run, ['worktree', 'list', '--porcelain'])).split('\n').filter(line => line.startsWith('branch refs/heads/')).map(line => line.slice('branch refs/heads/'.length)))
+  return new Set((await worktreeList(run)).split('\n').filter(line => line.startsWith('branch refs/heads/')).map(line => line.slice('branch refs/heads/'.length)))
 }
 
 export async function switchBack(run: Run, target: string | undefined): Promise<{ problem?: string; on: string }> {
@@ -357,7 +362,7 @@ export async function deleteBranches(run: Run, names: string[]): Promise<{ delet
 
 async function worktrees(run: Run): Promise<Array<{ path: string; branch: string }>> {
   const rows: Array<{ path: string; branch: string }> = []
-  for (const line of (await gitText(run, ['worktree', 'list', '--porcelain'])).split('\n')) {
+  for (const line of (await worktreeList(run)).split('\n')) {
     if (line.startsWith('worktree ')) rows.push({ path: line.slice('worktree '.length), branch: '' })
     else if (line.startsWith('branch refs/heads/') && rows.length) rows[rows.length - 1].branch = line.slice('branch refs/heads/'.length)
   }
@@ -441,7 +446,7 @@ export async function createReviewWorktree(run: Run, input: { root: string; numb
   const path = worktreeName(input.root, input.number, input.headRef)
   const { target } = await fetchHead(run, { ...input, own: false })
   const { executable, instructions } = claudeCodeChanges(await changedFiles(run, await prBase(run, input.baseRef, target), target))
-  if (executable.length) return { path, created: false, executable, instructions }
+  if (executable.length || instructions.length) return { path, created: false, executable, instructions }
   const exists = (await worktrees(run)).some(tree => tree.path === path)
   if (!exists) await gitText(run, ['worktree', 'add', '-q', '--detach', path, target])
   else {
@@ -456,6 +461,10 @@ export async function createReviewWorktree(run: Run, input: { root: string; numb
 export function withExcluded(text: string, line: string): string | undefined {
   if (text.split('\n').includes(line)) return undefined
   return `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`
+}
+
+export async function mainWorktree(run: Run): Promise<string> {
+  return (await worktreeList(run)).split('\n')[0].slice('worktree '.length)
 }
 
 export async function excludeFile(run: Run): Promise<string> {

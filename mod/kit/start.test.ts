@@ -17,3 +17,10 @@ test('parsePrArgs: список, PR, PR со сценарием, stop; оста�
   assert.ok('error' in parsePrArgs('0x7'))
   assert.ok('error' in parsePrArgs('1e1'))
 })
+
+test('parsePrArgs: <N> bg — ревью в фоне; bg без номера или со сценарием — ошибка', () => {
+  assert.deepEqual(parsePrArgs('7 bg'), { pr: 7, background: true })
+  assert.ok('error' in parsePrArgs('bg'))
+  assert.ok('error' in parsePrArgs('7 fix bg'))
+  assert.ok('error' in parsePrArgs('7 bg x'))
+})
