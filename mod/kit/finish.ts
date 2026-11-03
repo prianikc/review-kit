@@ -16,10 +16,11 @@ export async function dropReviewWorktree($: EngineInterface): Promise<string | u
   const run = runner($)
   if (await inMainTree(run)) return undefined
   const here = await projectRoot($)
-  if (await readMarker($, here)) return `worktree ${here} оставлен: ревью шло в фоне — уберётся при следующем /pr в основном дереве`
+  const background = await readMarker($, here)
   const main = await mainRoot($)
   const fromMain: Run = (argv, init) => run(argv, { cwd: main, ...init })
   const result = await removeWorktrees(fromMain, [here], { confirmed: false, isActive: isActive($) })
+  if (result.removed.length && background) return `worktree ${here} удалён — ревью закончено; вернитесь в основную сессию кнопкой «← назад»`
   if (result.removed.length) return `worktree ${here} удалён — ревью закончено, вкладку можно закрыть; команды в ней больше не работают`
   const reason = result.skipped[0]?.reason
   return reason && reason !== 'не worktree ревью' ? `worktree ${here} оставлен (${reason}) — уберётся при следующем /pr` : undefined
