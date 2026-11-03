@@ -2,6 +2,7 @@ import type { EngineInterface } from 'claude-code'
 import { commentIds, driftOf, loadPr, type IntakeItem, type PrData, type PrSnapshot } from '../status.ts'
 import { buildInput, B_SKIPPED, fileStates, lineCount, manifestText, notAttached, type TriageItem } from '../run/input.ts'
 import { readRules } from '../run/rules.ts'
+import { afterFunnel } from './background.ts'
 import { collectFindings, finishTriage, type GateRow, type ThresholdRow } from '../run/findings.ts'
 import { fetchHead, reviewBase, changedFiles, gitText, reviewed, snapshot } from '../git.ts'
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from '../guide.ts'
@@ -129,6 +130,7 @@ export async function collect($: EngineInterface, pr: number, id: WorkflowId, ou
   })
   const json = JSON.stringify({ ...result, discussion: { ...discussion, open: openThreads(discussion.threads) } }, null, 2)
   await $.fs.write(id === 'fix-check' ? `${out}/findings.json` : `${dir}/findings.json`, json)
+  if (id === 'funnel') await afterFunnel($, pr).catch(error => $.ui.log(`review-kit: result.json не записан: ${String(error)}`))
   return id === 'fix-check' ? json : staleMarked($, pr, dir, json)
 }
 

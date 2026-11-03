@@ -12,7 +12,7 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 | `.claude-plugin/` | манифест (`plugin.json`: версия, `userConfig`) и `marketplace.json` |
 | `hooks/hooks.json` | подключает мод `mod/register.ts` |
 | `mod/register.ts` | описания команды `/pr` и инструментов, подключение хуков (логика — в `mod/kit/`), хуки гейта агентов |
-| `mod/kit/` | логика мода: `engine` (общие опоры), `state` (прогон), `forge` (хостинг и конфиг), `start` (старт, stash, самоочистка), `workflow` (вход агентам, сбор), `publish` (ревью, ответы, commit+push), `finish` (`review_finish`), `worktrees` (`review_worktree`), `gate`, `band` (кнопка PR над промптом); сценарные тесты — `scenarios.test.ts` |
+| `mod/kit/` | логика мода: `engine` (общие опоры), `state` (прогон), `forge` (хостинг и конфиг), `start` (старт, stash, самоочистка), `workflow` (вход агентам, сбор), `publish` (ревью, ответы, commit+push), `finish` (`review_finish`), `worktrees` (`review_worktree`), `background` (фоновые сессии ревью: запуск, кнопки `PR-N`, переход, уборка), `gate`, `band` (кнопка PR над промптом); сценарные тесты — `scenarios.test.ts` |
 | `mod/testing/` | опоры тестов: `repo.ts` (git во временной папке), `engine.ts` (фейковый движок) |
 | `mod/forge/` | модель хостинга (`types.ts`), выбор адаптера и токена (`index.ts`), адаптеры (`forgejo.ts`), фейк для тестов |
 | `mod/status.ts` | сценарий и статус PR, intake замечаний |
@@ -58,7 +58,7 @@ POSIX (Linux, macOS, WSL), git ≥ 2.38, Node 24. Версия — `version` в 
 - **Проверка правок.** Скилл с описанием `review-kit extension: fix review — <Name>. <English description>` — вариант
   в «Правки PR N перед push» (`pr-fix-run` шаг 5). Возврат — шаг 6: `approved`, `annotated` + файл замечаний,
   `dismissed`/`failed`.
-- **Worktree ревью.** `review_worktree` создаёт деревья и отдаёт `command` для каждого; терминал открывает расширение.
+- **Worktree ревью.** Необязательная. Базовый путь `review_worktree` — фоновая сессия `claude --bg` в каждом дереве; расширение может открывать для них настоящие вкладки.
 - Лимиты вариантов: публикация — не больше 2, проверка правок — не больше 1; первые по алфавиту имени скилла.
 - Расширение пишет только в `.review-kit/run/<N>/ext/<имя>/`; состояние мода и остальные файлы прогона — только чтение.
 - Имена разделов «Finish», «Directly» и «step 6» — часть контракта, не переименовываются.

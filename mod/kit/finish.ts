@@ -3,6 +3,7 @@ import { deleteBranches, gitText, inMainTree, removeWorktrees, stashAction, STAS
 import { projectRoot, runner, readJson } from './engine.ts'
 import { activeRun, runFacts, runDir, READ_ONLY_SCENARIOS, finishRun, isActive } from './state.ts'
 import { mainRoot } from './worktrees.ts'
+import { readMarker } from './background.ts'
 
 export interface RunReturn {
   headRef?: string
@@ -15,6 +16,7 @@ export async function dropReviewWorktree($: EngineInterface): Promise<string | u
   const run = runner($)
   if (await inMainTree(run)) return undefined
   const here = await projectRoot($)
+  if (await readMarker($, here)) return `worktree ${here} оставлен: ревью шло в фоне — уберётся при следующем /pr в основном дереве`
   const main = await mainRoot($)
   const fromMain: Run = (argv, init) => run(argv, { cwd: main, ...init })
   const result = await removeWorktrees(fromMain, [here], { confirmed: false, isActive: isActive($) })

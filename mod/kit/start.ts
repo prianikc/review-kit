@@ -1,4 +1,5 @@
 import type { EngineInterface } from 'claude-code'
+import { dropFinishedSessions } from './background.ts'
 import { contextOf, prListText, pullRows, intakeItems, loadPr, scenarioOf, type PrContext } from '../status.ts'
 import { applySwitch, changedFiles, claudeCodeChanges, deleteBranches, isAncestor, mergeBase, operationInProgress, unmergedPaths, gitText, headShift, holder as worktreeHolder, inMainTree, planSwitch, leftoverRuns, removeWorktrees, stashAction, unpushed, worktreeCandidates, type SwitchPlan } from '../git.ts'
 import { overviewText } from '../run/overview.ts'
@@ -6,7 +7,8 @@ import { STATUS_ARGV, SUBMIT_ATTEMPTS, CANCEL, CLEAR, CONTINUE_THERE, CONTINUE_H
 import { ABANDONED_AFTER_MIN, activeRun, runFacts, runDir, openRun, deleteRunDir, foreignRun, type RunScenario, SKILL_OF, handOff, parseSaved, finishRun, isActive, isLive, writeContext } from './state.ts'
 import { roadmapDir, forge } from './forge.ts'
 
-export const USAGE = 'Использование: /pr [номер PR [review|feedback|fix]] | /pr stop'
+export const USAGE = 'Использование: /pr [номер PR [review|feedback|fix|bg]] | /pr stop'
+const BACKGROUND_ARG = 'bg'
 
 export const PR_SCENARIOS = ['review', 'feedback', 'fix'] as const
 
@@ -124,7 +126,8 @@ export async function selfClean($: EngineInterface): Promise<string> {
     for (const pr of runs) await deleteRunDir($, pr)
     const guides = (await run(['find', `${root}/.review-kit/guide`, '-name', '*.md', '-mmin', `+${ABANDONED_AFTER_MIN}`, '-print', '-delete'])).stdout.split('\n').filter(Boolean).length
     const trees = await dropFinishedWorktrees($).catch(() => 0)
-    const parts = [runs.length ? `папок прогонов ${runs.length}` : '', guides ? `гайдов ${guides}` : '', trees ? `worktree ревью ${trees}` : ''].filter(Boolean)
+    const sessions = await dropFinishedSessions($, root).catch(() => 0)
+    const parts = [runs.length ? `папок прогонов ${runs.length}` : '', guides ? `гайдов ${guides}` : '', trees ? `worktree ревью ${trees}` : '', sessions ? `фоновых сессий ревью ${sessions}` : ''].filter(Boolean)
     return parts.length ? `Убрано за прошлыми прогонами: ${parts.join(', ')}.` : ''
   } catch {
     return ''
@@ -150,13 +153,15 @@ export async function askAboutActive($: EngineInterface, pr: number | undefined,
 
 export type PrScenario = (typeof PR_SCENARIOS)[number]
 
-export function parsePrArgs(arg: string): { stop: true } | { pr?: number; scenario?: PrScenario } | { error: string } {
+export function parsePrArgs(arg: string): { stop: true } | { pr?: number; scenario?: PrScenario; background?: true } | { error: string } {
   const words = arg.trim().split(/\s+/).filter(Boolean)
   if (words.length === 0) return {}
   if (words.length === 1 && words[0] === 'stop') return { stop: true }
   const pr = /^\d+$/.test(words[0]) ? Number(words[0]) : NaN
   const scenario = PR_SCENARIOS.find(name => name === words[1])
-  if (!Number.isInteger(pr) || pr < 1 || words.length > 2 || (words.length === 2 && !scenario)) return { error: USAGE }
+  const background = words[1] === BACKGROUND_ARG
+  if (!Number.isInteger(pr) || pr < 1 || words.length > 2 || (words.length === 2 && !scenario && !background)) return { error: USAGE }
+  if (background) return { pr, background: true }
   return scenario ? { pr, scenario } : { pr }
 }
 

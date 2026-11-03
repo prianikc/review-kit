@@ -6,9 +6,9 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { applySwitch, claudeCodeChanges, planSwitch } from './git.ts'
 import { STASH_GONE, commitRound, deleteBranches, switchBack, foreignChanges, headShift, messageProblem, pushRound, roundState, stashAction } from './git.ts'
-import { createReviewWorktree, leftoverRuns, removeWorktrees, reviewed, shellQuote, withExcluded, worktreeName } from './git.ts'
+import { createReviewWorktree, leftoverRuns, removeWorktrees, reviewWorktrees, reviewed, shellQuote, withExcluded, worktreeName } from './git.ts'
 import { commitMerge, mergeBase, mergeProblem, operationInProgress } from './git.ts'
-import { existsSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 
 test('changedFiles/treeEntries/showFile/fileDiff: пути с пробелами и кириллицей без кавычек', async () => {
@@ -280,13 +280,14 @@ test('worktree ревью: настройки Claude Code пришли из вл
   assert.deepEqual([tree.created, tree.executable], [true, []])
 })
 
-test('worktree ревью: PR меняет только инструкции и данные .claude/ — worktree создаётся, инструкции в ответе', async () => {
+test('worktree ревью: PR меняет только инструкции и данные .claude/ — worktree не создаётся, инструкции в ответе', async () => {
   const r = repo(); r.origin()
   r.commit('a.txt', '1', 'base'); r.git('push', '-q', 'origin', 'main')
   r.git('switch', '-qc', 'feat'); r.commit('CLAUDE.md', 'x', 'doc'); r.commit('.claude/project-snapshot/files.txt', 'a', 'snap')
   const head = r.git('rev-parse', 'HEAD'); r.git('push', '-q', 'origin', 'feat'); r.git('switch', '-q', 'main')
   const tree = await createReviewWorktree(r.run, { root: r.dir, number: 3, headRef: 'feat', headSha: head, baseRef: 'main', pullRef: 'refs/pull/3/head', isActive: async () => false })
-  assert.deepEqual([tree.created, tree.executable, tree.instructions], [true, [], ['CLAUDE.md']])
+  assert.deepEqual([tree.created, tree.executable, tree.instructions], [false, [], ['CLAUDE.md']])
+  assert.equal(existsSync(tree.path), false)
 })
 
 test('worktree ревью: создаётся; повтор ставит на новую голову PR; грязный или с активным прогоном — ошибка; без базы — отказ', async () => {
@@ -305,6 +306,18 @@ test('worktree ревью: создаётся; повтор ставит на н
   spawnSync('git', ['-C', bare, 'update-ref', '-d', 'refs/heads/main'])
   r.git('update-ref', '-d', 'refs/remotes/origin/main')
   await assert.rejects(createReviewWorktree(r.run, { ...input, number: 9, baseRef: 'gone', headSha: next }), /базу PR не найти/)
+})
+
+test('worktree ревью: папку удалили мимо git — уборка не падает, повтор создаёт worktree заново', async () => {
+  const r = repo(); r.origin()
+  r.commit('a.txt', '1', 'base'); r.git('push', '-q', 'origin', 'main')
+  r.git('switch', '-qc', 'feat'); const head = r.commit('a.txt', '2', 'pr'); r.git('push', '-q', 'origin', 'feat'); r.git('switch', '-q', 'main')
+  const input = { root: r.dir, number: 8, headRef: 'feat', headSha: head, baseRef: 'main', pullRef: 'refs/pull/8/head', isActive: async () => false }
+  const tree = await createReviewWorktree(r.run, input)
+  rmSync(tree.path, { recursive: true, force: true })
+  assert.deepEqual(await reviewWorktrees(r.run, async () => false), [])
+  const again = await createReviewWorktree(r.run, input)
+  assert.deepEqual([again.created, r.git('-C', tree.path, 'rev-parse', 'HEAD')], [true, head])
 })
 
 function baseMoved(conflict: boolean) {

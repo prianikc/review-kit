@@ -11,7 +11,9 @@ The report of review-kit:pr-review-run is already shown; `.review-kit/run/<N>/fi
 
 ## Publish
 
-AskUserQuestion «Как публикуем ревью PR <N>?» — «Сразу», «Не публиковать», then the extensions: every skill among your
+AskUserQuestion «Как публикуем ревью PR <N>?» — when `.review-kit/run/<N>/result.json` exists (`verdict`, `blocking`,
+`nonBlocking`), the question is «Как публикуем ревью PR <N>? <Changes requested | Approved with comments | Approved> ·
+блокирующих <blocking>, остальных <nonBlocking>» (`changes`, `comments`, `approved`). Options «Сразу», «Не публиковать», then the extensions: every skill among your
 skills whose description starts with `review-kit extension: publish — <Name>.` adds the option `<Name>`. At most two,
 the first by skill name in alphabetical order; when more exist, say «Расширения не поместились: <names>» before the
 question. «Не публиковать» → «Finish» with nothing published.

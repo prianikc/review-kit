@@ -4,13 +4,13 @@ import type { ExplicitVerdict } from './run/review.ts'
 import { projectRoot } from './kit/engine.ts'
 import { activeRun, runFacts, READ_ONLY_SCENARIOS, finishRun } from './kit/state.ts'
 import { SETTINGS } from './kit/forge.ts'
-import { reviewWorktrees } from './kit/worktrees.ts'
+import { backgroundReview, reviewWorktreesAnswer } from './kit/worktrees.ts'
 import { type PrepareKind, type WorkflowId, prepare, collect, prepareGuide } from './kit/workflow.ts'
 import { publishReview, publishReplies, commitPush } from './kit/publish.ts'
 import { finishReview } from './kit/finish.ts'
 import { parsePrArgs, routePr, startConflict } from './kit/start.ts'
 import { GUARD_FAILED, readGatedAgent, gateLog, manifestOf } from './kit/gate.ts'
-import { registerBand } from './kit/band.ts'
+import { registerBand, startAgentsPoll } from './kit/band.ts'
 
 const GATED_AGENT = { plugin: 'review-kit', key: 'gatedAgent' } as const
 
@@ -63,7 +63,7 @@ const TOOL_SPECS = [
   },
   {
     name: 'review_worktree',
-    description: 'For extension skills: create a review worktree for each named PR (no prs — for every PR with something to do) and answer JSON { trees: [{ pr, path, command, auto, note? }], here: [pr], skipped: [{ pr, reason }] }. An extension opens a terminal in each path and runs command there (named prs — /pr N review; no prs — /pr N, the scenario by status); the kit itself opens nothing, and without such an extension the worktrees are useless. here — own PRs checked out in the main tree: run /pr N in this tab. A PR that changes Claude Code settings, hooks or MCP is skipped; one that changes only agent instructions gets auto: false. Unused clean worktrees are removed by the next /pr in the main tree.',
+    description: 'Only when the user asks to open several PRs at once, or to run a review in the background (then one PR is fine). For one PR without such a request run /pr N in this session, never this tool. Creates a review worktree for each named PR (no prs — every PR with something to do) and starts its review in a background Claude Code session named PR-<N>. Answers JSON { trees: [{ pr, path, session: { id, name } }], here: [{ pr, reason? }], skipped: [{ pr, reason }], text }. Show text to the user as is. Then, for the first PR of here, run its review in this session (review_start with that pr); the next one after review_finish of the previous. Unused clean worktrees are removed by the next /pr in the main tree.',
     inputSchema: { type: 'object', properties: { prs: { type: 'array', items: { type: 'number' } } } },
     isDeferred: false,
   },
@@ -82,7 +82,7 @@ const TOOL_SPECS = [
 ]
 
 const COMMAND_SPECS = [
-  { name: 'pr', description: 'Список PR, сценарий для PR N или stop', argumentHint: '[номер PR [review|feedback|fix]] | stop' },
+  { name: 'pr', description: 'Список PR, сценарий для PR N, ревью в фоне (bg) или stop', argumentHint: '[номер PR [review|feedback|fix|bg]] | stop' },
 ]
 
 export const register: Register = (on, options) => {
@@ -94,6 +94,7 @@ export const register: Register = (on, options) => {
     for (const spec of COMMAND_SPECS) {
       await $.command.register(spec).catch(error => $.ui.log(`review-kit: команда /${spec.name} не зарегистрирована: ${String(error)}`))
     }
+    if (e.isInteractive) startAgentsPoll($)
     return next(e)
   })
 
@@ -108,6 +109,7 @@ export const register: Register = (on, options) => {
     }
 
     try {
+      if ('background' in args && args.background && args.pr !== undefined) return { text: await backgroundReview($, args.pr) }
       return { text: await routePr($, args.pr, 'submit', args.scenario) }
     } catch (error) {
       return { text: `review-kit: ${(error as Error).message}` }
@@ -179,7 +181,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'mcp__review-kit__review_worktree' }, async ($, e) => {
     try {
-      return { result: JSON.stringify(await reviewWorktrees($, (e as unknown as { prs?: number[] }).prs)) }
+      return { result: JSON.stringify(await reviewWorktreesAnswer($, (e as unknown as { prs?: number[] }).prs)) }
     } catch (error) {
       return { result: `review-kit: ${(error as Error).message}` }
     }
