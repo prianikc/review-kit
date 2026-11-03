@@ -64,4 +64,4 @@ The user does not want to publish → `review_finish`. Every stop of this skill 
 or the hosting API; publishing goes only through `review_publish`.
 
 `review_finish` answers with a `worktree … удалён` line when the review ran in its own review worktree: show that line as
-the last thing and call no tools after it — the tree is gone. A `worktree … оставлен` line → show it.
+the last thing and call no tools after it — the tree is gone (after a background review the line points to the «← назад» button). A `worktree … оставлен` line → show it.

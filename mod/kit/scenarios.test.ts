@@ -45,6 +45,7 @@ test('ревью в основном дереве с изменениями: sta
   assert.equal(readFileSync(join(r.dir, 'a.txt'), 'utf8'), 'wip')
   assert.equal(r.git('branch', '--list', 'feat'), '')
   assert.equal(r.git('stash', 'list'), '')
+  assert.equal(existsSync(join(r.dir, '.review-kit/run/7')), false)
   assert.deepEqual(asked, [])
 })
 

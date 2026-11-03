@@ -240,6 +240,19 @@ test('нажатие PR-7: /resume не сменил сессию (не нашё
   assert.deepEqual(t.toasts, ['review-kit: не удалось открыть ревью PR 7 (сессия sid7 не открылась) — открой его: claude attach PR-7'])
 })
 
+test('«← назад»: после возврата запись законченной фоновой сессии с удалённым деревом убрана', async () => {
+  const t = resumedTree()
+  const agents = JSON.stringify([
+    { id: 'id7', sessionId: 'sid7', name: 'PR-7', cwd: join(t.r.dir, '.claude/worktrees/pr-7-feat'), kind: 'background', status: null, state: 'stopped' },
+    { id: 'id8', sessionId: 'sid8', name: 'PR-8', cwd: t.r.dir, kind: 'background', status: null, state: 'stopped' },
+  ])
+  const original = t.$.process.run
+  Object.assign(t.$.process, { run: async (argv: string[], init?: never) => argv[0] === 'claude' && argv[1] === 'agents' ? (t.calls.push(argv), { exitCode: 0, stdout: agents, stderr: '' }) : original(argv, init) })
+  await withButtons(t.$, { buttons: [], back: { pr: 7, mainSessionId: 'main-id' } })
+  await t.press('back')
+  assert.deepEqual(t.calls.filter(argv => argv[1] === 'rm'), [['claude', 'rm', 'id7']])
+})
+
 test('«← назад»: /resume не сменил сессию — тост, кнопка остаётся', async () => {
   const t = resumedTree({ resume: async () => ({ text: 'Session main-id was not found.' }) })
   await withButtons(t.$, { buttons: [], back: { pr: 7, mainSessionId: 'main-id' } })
