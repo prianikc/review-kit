@@ -36,6 +36,20 @@ export function openThreads(threads: DiscussionThread[]): string[] {
   return threads.filter(thread => thread.status === 'open' && !thread.nonBlocking).map(thread => thread.id)
 }
 
+export interface OthersThread {
+  id: string
+  place: string
+  replied: boolean
+  findings: string[]
+}
+
+export function othersThreads(threads: DiscussionThread[], groups: { findings: Finding[]; belowBar: Finding[]; unconfirmed: Finding[] }): OthersThread[] {
+  const all = [...groups.findings, ...groups.belowBar, ...groups.unconfirmed]
+  return threads.filter(thread => thread.status === 'open' && thread.opener === 'ревьюер').map(thread => ({
+    id: thread.id, place: thread.place, replied: Boolean(thread.lastAuthorReply), findings: all.filter(item => item.thread === thread.id).map(item => item.id),
+  }))
+}
+
 export function parseCovered(diffU0: string): Map<string, Set<number>> {
   const covered = new Map<string, Set<number>>()
   const state: { file: string | null } = { file: null }

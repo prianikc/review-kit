@@ -8,7 +8,7 @@ import { fetchHead, reviewBase, changedFiles, gitText, reviewed, snapshot } from
 import { commitSource, guideText, parseTarget, prSource, type GuideSource, type GuideTarget } from '../guide.ts'
 import { triageText } from '../run/overview.ts'
 import { discussionOf, type Discussion, type DiscussionThread } from '../run/discussion.ts'
-import { openThreads } from '../run/review.ts'
+import { openThreads, othersThreads } from '../run/review.ts'
 import { RUN_FILES_EXCLUDE, projectRoot, exclude, runner, readJson } from './engine.ts'
 import { activeRun, runFacts, runDir, runContext } from './state.ts'
 import { forge, botLogins } from './forge.ts'
@@ -128,7 +128,7 @@ export async function collect($: EngineInterface, pr: number, id: WorkflowId, ou
     raw, changed, lineCounts, rules, skipped: notAttached(states), table, ...(await workflowNotes($, out)),
     threads: discussion.threads, repeats: id !== 'fix-check',
   })
-  const json = JSON.stringify({ ...result, discussion: { ...discussion, open: openThreads(discussion.threads) } }, null, 2)
+  const json = JSON.stringify({ ...result, discussion: { ...discussion, open: openThreads(discussion.threads), others: othersThreads(discussion.threads, result) } }, null, 2)
   await $.fs.write(id === 'fix-check' ? `${out}/findings.json` : `${dir}/findings.json`, json)
   if (id === 'funnel') await afterFunnel($, pr).catch(error => $.ui.log(`review-kit: result.json не записан: ${String(error)}`))
   return id === 'fix-check' ? json : staleMarked($, pr, dir, json)

@@ -28,12 +28,14 @@ your manifest, and the PR number.
    for `input.md` are positions inside `input.md` — never use them as `line`.
 6. Severity: every violation of a project rule is `blocking` with `category: "rule"` — the team blocks a merge on
    any rule the project states. `confidence` is your probability, 0–100, that the finding is real and correct.
-7. Before reporting, read `## DISCUSSION`. Do not report a finding that duplicates an existing
-   thread unless the author's latest reply leaves it unresolved; in that case report it as a
-   follow-up and quote the reply, saying why it does not close the issue. If the author points
-   to another PR or commit as the fix, verify it there when it is reachable.
-   The threads hold the review history: an earlier comment of ours that the code or the author's answer does not
-   close is reported again as a follow-up; one that is closed is not reported.
+7. Before reporting, read `## DISCUSSION`. Every open thread is review history whoever wrote it — ours, another
+   reviewer's or a bot's. For each one check the code at the PR head: a thread whose defect the code no longer has, or
+   that the author's reply settles, or that is resolved, is closed — do not report it. A thread whose defect is still
+   in the code and that neither the code nor the author's answer closes is reported as a follow-up finding with its
+   `thread`: `followUp` says why it is still open — the author's reply does not close it (quote it), or «не
+   исправлено, автор не ответил». Report it only when it is a violation of a project rule (step 3), never on the
+   thread's wording alone: another reviewer's comment that no rule file states is not reported. If the author
+   points to another PR or commit as the fix, verify it there when it is reachable.
    A finding on the defect of a thread carries `thread` — its id (`T1`, `T2`…). The author's answer to it, in the
    thread or in a general comment, goes verbatim into `authorReply`; a follow-up carries `followUp` — in Russian, why
    that answer does not close the issue. A finding with `thread` and `authorReply` but no `followUp` is dropped as a

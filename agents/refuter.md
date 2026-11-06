@@ -12,9 +12,10 @@ a rule you actually read.
 2. For each finding: open its file at the line, follow callers and types, see how neighbouring modules
    do it. For a rule finding, open the rule file and check it requires exactly this.
    The rules are the rule files of your manifest (listed by path in the RULES section of the input) — a rule quoted from anywhere else does not count.
-   Before judging, read `## DISCUSSION`. A finding that duplicates an existing thread is closed when the author's latest
-   reply settles it — in the thread or in a general comment. If the author points to another PR or commit as the fix,
-   verify it there when it is reachable.
+   Before judging, read `## DISCUSSION`. A finding that repeats an existing thread — ours, another reviewer's or a
+   bot's — is closed when the code at the PR head no longer has the defect, the author's latest reply settles it (in
+   the thread or in a general comment), or the thread is resolved. A thread nobody answered and the code did not fix
+   is not closed. If the author points to another PR or commit as the fix, verify it there when it is reachable.
 3. One verdict per finding id, never merged:
    - `evidence` — required for `refuted` and `confirmed`: first `<path from the repository root>:<line>` in
      the finding's own file, the line number taken from your own Read of that file (not from the finding,
@@ -26,9 +27,10 @@ a rule you actually read.
      ground: `regression` needs the behaviour to have worked at the DIFF base, `goal` needs the PR description or
      ticket, otherwise it is `non-blocking`. A blocking finding with `rule` stays `blocking` / `rule`;
    - `cannot-refute` — you could not check it;
-   - `closed` — closed by a reply in thread Tn: the finding repeats a thread of `## DISCUSSION` that the discussion
-     already settles (the author's answer holds, the fix is in another PR or commit you checked, or the thread is
-     resolved). Give `thread` — the id — and in `evidence` the reply that closes it, quoted. A finding with
-     `followUp` argues the reply does not close it: judge that argument, not the repeat.
+   - `closed` — closed in thread Tn: the finding repeats a thread of `## DISCUSSION` that is already settled (the code
+     at the PR head no longer has the defect, the author's answer holds, the fix is in another PR or commit you
+     checked, or the thread is resolved). Give `thread` — the id — and in `evidence` what closes it: the reply,
+     quoted, or `<path>:<line>` of the fixed code. A finding with `followUp` argues the thread is still open: judge
+     that argument, not the repeat.
    - `duplicateOf` — the id of a finding in the same group that states the same defect.
 4. Answer only through the structured output.

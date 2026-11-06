@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildDraft, buildReplies, chosenVerdict, openThreads, parseCovered, verdictName } from './review.ts'
+import { buildDraft, buildReplies, chosenVerdict, openThreads, othersThreads, parseCovered, verdictName } from './review.ts'
 import { MARKER } from '../status.ts'
 import type { Finding } from './findings.ts'
 import type { DiscussionThread } from './discussion.ts'
@@ -103,4 +103,13 @@ test('buildDraft: неблокирующая в строке — с префик
 test('openThreads: неблокирующий тред не открыт для вердикта; тред без префикса — открыт', () => {
   const threads = [{ id: 'T1', place: 'a:1', status: 'open', last: 'мы', nonBlocking: true, commentIds: ['1'] }, { id: 'T2', place: 'a:2', status: 'open', last: 'мы', nonBlocking: false, commentIds: ['2'] }] as DiscussionThread[]
   assert.deepEqual(openThreads(threads), ['T2'])
+})
+
+test('othersThreads: только открытые чужие треды, с находками всех групп', () => {
+  const t = (id: string, opener: string, status = 'open', reply?: string) => ({ id, place: `a:${id.slice(1)}`, status, last: opener, opener, nonBlocking: false, commentIds: [id], ...(reply ? { lastAuthorReply: reply } : {}) }) as DiscussionThread
+  const threads = [t('T1', 'мы'), t('T2', 'ревьюер'), t('T3', 'ревьюер', 'resolved'), t('T4', 'автор'), t('T5', 'ревьюер', 'open', 'поправлю')]
+  const a1 = { ...f('A-1', 'blocking', 2), thread: 'T2' }
+  const b1 = { ...f('B-1', 'non-blocking', 5), thread: 'T5' }
+  assert.deepEqual(othersThreads(threads, { findings: [a1], belowBar: [], unconfirmed: [b1] }), [{ id: 'T2', place: 'a:2', replied: false, findings: ['A-1'] }, { id: 'T5', place: 'a:5', replied: true, findings: ['B-1'] }])
+  assert.deepEqual(othersThreads([t('T2', 'ревьюер')], { findings: [], belowBar: [], unconfirmed: [] }), [{ id: 'T2', place: 'a:2', replied: false, findings: [] }])
 })
