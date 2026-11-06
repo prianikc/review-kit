@@ -24,7 +24,7 @@ test('discussionOf: PR 201 — тред T1 с последним словом р
     general: [general('8917', 'afenin', 'Валидация вынесена в #205', '2026-10-02T09:00:00Z')],
   })
   const result = discussionOf(d)
-  assert.deepEqual(result.threads, [{ id: 'T1', place: '.env.example:13', status: 'open', last: 'мы', nonBlocking: false, commentIds: ['c1'] }])
+  assert.deepEqual(result.threads, [{ id: 'T1', place: '.env.example:13', status: 'open', last: 'мы', opener: 'мы', nonBlocking: false, commentIds: ['c1'] }])
   assert.match(result.text, /^### T1 · \.env\.example:13 · open · последнее слово: мы\n- avartamonov \[мы\] \(ревью 1969, REQUEST_CHANGES\): PEP_\* нет в Joi$/m)
   assert.match(result.text, /### Общие комментарии\n- afenin \[автор\] \(issue 8917, 2026-10-02 09:00\): Валидация вынесена в #205/)
   assert.ok(result.text.indexOf('### T1') < result.text.indexOf('### Общие комментарии'))
@@ -77,5 +77,18 @@ test('discussionOf: длинное обсуждение обрезается п�
 test('discussionOf: тред, начатый неблокирующим «TODO:», помечен nonBlocking; обычный — нет', () => {
   const todo = thread([comment('c1', 'avartamonov', 'TODO: вынести в константу\n\n<!-- review-kit -->', '2026-10-01T10:00:00Z')])
   const plain = thread([comment('c2', 'carol', 'тут null', '2026-10-01T11:00:00Z', '1970')], false, 'b.ts', 2)
-  assert.deepEqual(discussionOf(data({ threads: [todo, plain] })).threads.map(t => [t.id, t.nonBlocking]), [['T1', true], ['T2', false]])
+  const foreignTodo = thread([comment('c3', 'carol', 'TODO: потом', '2026-10-01T12:00:00Z', '1971')], false, 'c.ts', 3)
+  assert.deepEqual(discussionOf(data({ threads: [todo, plain, foreignTodo] })).threads.map(t => [t.id, t.nonBlocking]), [['T1', true], ['T2', false], ['T3', false]])
+})
+
+test('discussionOf: opener — мы, автор или ревьюер; бот — ревьюер', () => {
+  const d = data({
+    threads: [
+      thread([comment('c1', 'avartamonov', 'наше', '2026-10-01T10:00:00Z')]),
+      thread([comment('c2', 'afenin', 'заметка автора', '2026-10-01T11:00:00Z', '1970')], false, 'a.ts', 1),
+      thread([comment('c3', 'carol', 'тут null', '2026-10-01T12:00:00Z', '1971')], false, 'b.ts', 2),
+      thread([comment('c4', 'ai-review-bot', 'стиль', '2026-10-01T13:00:00Z', '1972')], false, 'c.ts', 3),
+    ],
+  })
+  assert.deepEqual(discussionOf(d, { bots: ['ai-review-bot'] }).threads.map(t => [t.id, t.opener]), [['T1', 'мы'], ['T2', 'автор'], ['T3', 'ревьюер'], ['T4', 'ревьюер']])
 })

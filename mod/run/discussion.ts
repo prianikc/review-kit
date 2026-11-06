@@ -14,6 +14,7 @@ export interface DiscussionThread {
   place: string
   status: 'open' | 'resolved'
   last: LastWord
+  opener: LastWord
   lastAuthorReply?: string
   nonBlocking: boolean
   commentIds: string[]
@@ -63,8 +64,8 @@ export function discussionOf(data: PrData, { bots = [], limit = MAX_DISCUSSION_C
     const last = thread.comments[thread.comments.length - 1]
     const reply = thread.comments.slice(1).filter(comment => same(comment.author, author) && !mine(comment)).at(-1)
     return {
-      id: `T${index + 1}`, place: `${thread.path ?? ''}:${thread.line ?? ''}`, status: thread.resolved ? 'resolved' : 'open', last: lastWord(last),
-      ...(reply ? { lastAuthorReply: reply.body.trim() } : {}), nonBlocking: thread.comments[0].body.replace(MARKER, '').trim().startsWith(NON_BLOCKING_PREFIX), commentIds: thread.comments.map(comment => comment.id),
+      id: `T${index + 1}`, place: `${thread.path ?? ''}:${thread.line ?? ''}`, status: thread.resolved ? 'resolved' : 'open', last: lastWord(last), opener: lastWord(thread.comments[0]),
+      ...(reply ? { lastAuthorReply: reply.body.trim() } : {}), nonBlocking: mine(thread.comments[0]) && thread.comments[0].body.replace(MARKER, '').trim().startsWith(NON_BLOCKING_PREFIX), commentIds: thread.comments.map(comment => comment.id),
     }
   })
   const threadBlock = (thread: Thread, info: DiscussionThread) => [

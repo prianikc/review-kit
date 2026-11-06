@@ -34,18 +34,22 @@ The guide was shown in section 1; do not repeat it.
 
 `findings.json` holds `findings` (confirmed), `belowBar` (confirmed, below the bar), `unconfirmed` (refuted or dropped by
 a check; `mark` says why, `evidence` has C's argument), `dropped` (ids with reasons), `notChecked` and `discussion` — the
-PR's threads before this run (`threads`: `id`, `place`, `status`, `last` — whose word is last, `lastAuthorReply`), `open` —
-ids of the open threads, `questions` — questions with no answer. Every finding has `thread` (`T<n>` or `null`); a
+PR's threads before this run (`threads`: `id`, `place`, `status`, `last` — whose word is last, `opener` — who opened it,
+`lastAuthorReply`), `open` — ids of the open threads, `others` — open threads opened by other reviewers or bots (`id`,
+`place`, `replied`, `findings` — ids of findings of any group that refer to it), `questions` — questions with no answer. Every finding has `thread` (`T<n>` or `null`); a
 follow-up to a thread also has `followUp`. In Russian, in this order:
-1. `Вердикт: <verdict>` with one line of reason, from `findings` and the open threads: Changes requested if any blocking
+1. `Вердикт: <verdict>` with one line of reason, from `findings`: Changes requested if any blocking
    finding (including a follow-up to an earlier thread), Approved with comments if only non-blocking, Approved if none.
-   Open threads alone never decide the verdict — an earlier comment that is still not fixed comes back from the agents
-   as a follow-up finding.
+   Threads never decide the verdict by themselves: an open thread — ours or another reviewer's — that the code still
+   does not fix comes back from the agents as a follow-up finding, with the level the agents gave it on the kit's
+   scale; another reviewer's thread blocks only through such a finding.
 2. `Статус: <status>` from `context.json`.
 3. «Подтверждённые» — each of `findings`: `<id> · <блокирует: <category> | не блокирует>[ · <mark>][ · <thread>] · <file>:<lines>` — the problem; its
    failure scenario or the rule it breaks; with `followUp` also «follow-up к <thread>: <followUp>».
    Then «Обсуждение PR» — the open threads of `discussion.open` as `<id> · <place> · последнее слово: <last>`, the author's
    answers (`lastAuthorReply`, quoted), and every `questions` entry; nothing of that → «обсуждения нет».
+   Then «Замечания других ревьюеров» — each of `discussion.others`: `<id> · <place> · <автор ответил | без ответа
+   автора> · <→ <findings ids> | находки нет — агенты сочли закрытым или пропустили>`; left out when `others` is empty.
 4. «Подтверждено, ниже порога» — each of `belowBar` in the same form plus `<confidence>%`.
 5. «Не подтверждено» — each of `unconfirmed` in the same form plus the reason: «опровергнуто: <evidence>» or the `mark`.
 6. «Не проверялось» — every `notChecked` entry, duplicates from `dropped` as «<id> — дубль <id>», and, when `baseFallback`
