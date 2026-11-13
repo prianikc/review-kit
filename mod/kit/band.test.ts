@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { EngineInterface } from 'claude-code'
 import { pollOnce, readReviews, registerBand } from './band.ts'
@@ -39,7 +39,13 @@ function setup(run: (input: unknown) => Promise<unknown> = async () => undefined
     session: { root: async () => '/tmp/none' },
   }
   let stopResult = { exitCode: 0, stdout: '', stderr: '' }
-  const render = (hasSurvey: boolean) => hooks['ui.render'][0].hook($, { props: { hasSurvey } }, async () => BELOW)
+  const renderHook = (component: string) => hooks['ui.render'].find(item => (item.matcher as { component: string }).component === component)!.hook
+  const render = (hasSurvey: boolean) => renderHook('AbovePrompt')($, { props: { hasSurvey } }, async () => BELOW)
+  const list = async (props: { rows: Array<{ plugin: string; tree: unknown }> }) => {
+    let seen: { props: typeof props } | undefined
+    await renderHook('AbovePromptList')($, { props }, async (e: { props: typeof props }) => { seen = e; return null })
+    return seen!.props
+  }
   const pressOn = async (element: string) => {
     for (const { matcher, hook } of hooks['ui.press']) {
       const m = matcher as { element?: string }
@@ -51,7 +57,7 @@ function setup(run: (input: unknown) => Promise<unknown> = async () => undefined
     return { element: 'next' }
   }
   const press = () => pressOn('pr')
-  return { hooks, render, press, pressOn, runs, toasts, claudeCalls, submitted, failStop: () => { stopResult = { exitCode: 1, stdout: '', stderr: 'no such agent' } } }
+  return { hooks, render, list, press, pressOn, runs, toasts, claudeCalls, submitted, failStop: () => { stopResult = { exitCode: 1, stdout: '', stderr: 'no such agent' } } }
 }
 
 test('полоса: нажатие ловит хук ui.press своей кнопки', () => {
@@ -59,15 +65,24 @@ test('полоса: нажатие ловит хук ui.press своей кно�
   assert.deepEqual(hooks['ui.press'][0].matcher, { plugin: 'review-kit', element: 'pr' })
 })
 
-test('полоса: кнопка PR справа от того, что рисуют другие плагины', async () => {
-  const { render } = setup()
-  const tree = (await render(false)) as Node
+test('полоса: свой ряд — без чужого дерева, первая кнопка PR', async () => {
+  const tree = (await setup().render(false)) as Node
   assert.equal(tree.tag, 'Box')
-  assert.equal(tree.children[0], BELOW)
-  const button = tree.children.at(-1) as Node
-  assert.equal(button.tag, 'Button')
+  assert.equal(tree.children.includes(BELOW), false)
+  const button = tree.children[0] as Node
   assert.deepEqual({ key: button.props?.key, label: button.props?.label, hotkey: button.props?.hotkey }, { key: 'pr', label: 'PR', hotkey: 'r' })
   assert.equal(typeof button.props?.onPress, 'function')
+})
+
+test('ряды над промптом: ряд review-kit последним, чужие — в прежнем порядке', async () => {
+  const rows = [{ plugin: 'review-kit', tree: 'A' }, { plugin: 'polish', tree: 'B' }, { plugin: 'other', tree: 'C' }]
+  const seen = await setup().list({ rows })
+  assert.deepEqual(seen.rows.map(row => row.plugin), ['polish', 'other', 'review-kit'])
+})
+
+test('ряды над промптом: ряда review-kit нет — ряды без изменений', async () => {
+  const rows = [{ plugin: 'polish', tree: 'B' }]
+  assert.deepEqual((await setup().list({ rows })).rows, rows)
 })
 
 test('полоса: нажатие запускает /pr и забирает его', async () => {
@@ -160,18 +175,41 @@ function resumedTree({ stop = 0, resume }: { stop?: number; resume?: (input: { c
   const session = { id: 'test-session' }
   const engine = fakeEngine({ root: r.dir, claude: argv => { calls.push(argv); return { exitCode: stop, stdout: '', stderr: '' } }, command: resume ?? (async input => { if (input.command === 'resume') session.id = input.args ?? ''; return { text: '' } }) })
   Object.assign(engine.$.session, { id: async () => session.id })
+  return { ...engine, r, calls, press: pressFor(engine.$) }
+}
+
+function pressFor($: EngineInterface) {
   const hooks: Array<{ matcher: { element?: string }; hook: Hook }> = []
   registerBand(((event: string, matcher: { element?: string }, hook: Hook) => {
     if (event === 'ui.press') hooks.push({ matcher, hook })
     return { catch: () => undefined }
   }) as never)
-  const press = async (element: string) => {
+  return async (element: string) => {
     const hook = hooks.find(item => item.matcher.element === undefined)!.hook
-    const answer = await hook(engine.$, { plugin: 'review-kit', element }, async () => ({ element: 'next' }))
-    for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve))
+    const answer = await hook($, { plugin: 'review-kit', element }, async () => ({ element: 'next' }))
+    for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve))
     return answer
   }
-  return { ...engine, r, calls, press }
+}
+
+function backTree(status: 'done' | 'active', resume?: (input: { command: string; args?: string }) => Promise<unknown>) {
+  const r = repo(); r.commit('a.txt', '1', 'base')
+  const tree = join(r.dir, '.claude/worktrees/pr-7-feat')
+  r.git('worktree', 'add', '-q', '--detach', tree)
+  writeFileSync(join(r.dir, '.git/info/exclude'), '.review-kit/\n')
+  mkdirSync(join(tree, '.review-kit/run/7'), { recursive: true })
+  writeFileSync(join(tree, '.review-kit/background.json'), JSON.stringify({ pr: 7, mainSessionId: 'main-id' }))
+  writeFileSync(join(tree, '.review-kit/run/7/session.json'), JSON.stringify({ sessionId: 'sid7', status }))
+  const agents = JSON.stringify([{ id: 'id7', sessionId: 'sid7', name: 'PR-7', cwd: tree, kind: 'background', status: null, state: 'stopped' }])
+  const calls: string[][] = []
+  const session = { id: 'sid7' }
+  const engine = fakeEngine({
+    root: tree,
+    claude: argv => { calls.push(argv); return { exitCode: 0, stdout: argv[1] === 'agents' ? agents : '', stderr: '' } },
+    command: resume ?? (async input => { if (input.command === 'resume') session.id = input.args ?? ''; return { text: '' } }),
+  })
+  Object.assign(engine.$.session, { id: async () => session.id })
+  return { ...engine, tree, calls, press: pressFor(engine.$) }
 }
 
 async function withButtons($: EngineInterface, reviews: unknown) {
@@ -253,12 +291,29 @@ test('«← назад»: после возврата запись законч�
   assert.deepEqual(t.calls.filter(argv => argv[1] === 'rm'), [['claude', 'rm', 'id7']])
 })
 
-test('«← назад»: /resume не сменил сессию — тост, кнопка остаётся', async () => {
-  const t = resumedTree({ resume: async () => ({ text: 'Session main-id was not found.' }) })
+test('«← назад»: /resume не сменил сессию — тост, кнопка и дерево остаются', async () => {
+  const t = backTree('done', async () => ({ text: 'Session main-id was not found.' }))
   await withButtons(t.$, { buttons: [], back: { pr: 7, mainSessionId: 'main-id' } })
   await t.press('back')
   assert.deepEqual(t.toasts, ['review-kit: не удалось вернуться в основную сессию (сессия main-id не открылась) — /resume main-id'])
   assert.deepEqual((await readReviews(t.$)).back, { pr: 7, mainSessionId: 'main-id' })
+  assert.equal(existsSync(t.tree), true)
+})
+
+test('«← назад»: после возврата законченное дерево удалено и запись PR-7 убрана', async () => {
+  const t = backTree('done')
+  await withButtons(t.$, { buttons: [], back: { pr: 7, mainSessionId: 'main-id' } })
+  await t.press('back')
+  assert.equal(existsSync(t.tree), false)
+  assert.deepEqual(t.calls.filter(argv => argv[1] === 'rm'), [['claude', 'rm', 'id7']])
+})
+
+test('«← назад» до review_finish: дерево и запись сессии остаются', async () => {
+  const t = backTree('active')
+  await withButtons(t.$, { buttons: [], back: { pr: 7, mainSessionId: 'main-id' } })
+  await t.press('back')
+  assert.equal(existsSync(t.tree), true)
+  assert.deepEqual(t.calls.filter(argv => argv[1] === 'rm'), [])
 })
 
 test('опрос: сессия с меткой вне деревьев этого проекта — кнопки нет', async () => {

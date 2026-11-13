@@ -1,7 +1,10 @@
 import type { EngineInterface, Register } from 'claude-code'
 import { backToMain, backgroundTreesRoot, dropFinishedSessions, listAgents, openReview, reviewButtons, type BackgroundMarker, type ReviewButton } from './background.ts'
 import { projectRoot } from './engine.ts'
+import { dropBackgroundTree } from './finish.ts'
+import { mainRoot } from './worktrees.ts'
 
+const PLUGIN = 'review-kit'
 const PR_BUTTON = 'pr'
 const REVIEW_PREFIX = 'review:'
 const BACK_BUTTON = 'back'
@@ -45,15 +48,19 @@ export function registerBand(on: On): void {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
 
-    const below = await next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const { buttons, back } = await readReviews($)
     const reviews = buttons.slice(0, MAX_REVIEW_BUTTONS).flatMap(button => [
       h(Text, null, ' '),
       h(Button, { key: `${REVIEW_PREFIX}${button.pr}`, onPress: () => undefined }, h(Text, button.color ? { color: button.color } : null, `PR-${button.pr}`), ' !'),
     ])
-    return h(Box, null, below, h(Text, null, ' '), h(Button, { key: PR_BUTTON, label: 'PR', hotkey: 'r', onPress: () => undefined }), ...reviews,
+    return h(Box, null, h(Button, { key: PR_BUTTON, label: 'PR', hotkey: 'r', onPress: () => undefined }), ...reviews,
       ...(back ? [h(Text, null, ' '), h(Button, { key: BACK_BUTTON, label: '← назад', hotkey: 'b', onPress: () => undefined })] : []))
+  }).catch(($, e, next) => next(e))
+
+  on('ui.render', { component: 'AbovePromptList' }, ($, e, next) => {
+    const own = e.props.rows.filter(row => row.plugin === PLUGIN)
+    return own.length ? next({ ...e, props: { ...e.props, rows: [...e.props.rows.filter(row => row.plugin !== PLUGIN), ...own] } }) : next(e)
   }).catch(($, e, next) => next(e))
 
   on('ui.press', { plugin: 'review-kit', element: PR_BUTTON }, ($, e) => {
@@ -66,11 +73,15 @@ export function registerBand(on: On): void {
     const button = e.element.startsWith(REVIEW_PREFIX) ? buttons.find(item => `${REVIEW_PREFIX}${item.pr}` === e.element) : undefined
     if (button) void openReview($, button).then(async opened => { if (opened) await $.state.set(REVIEWS, { ...(await readReviews($)), back: opened }) })
       .catch(error => $.ui.toast(`review-kit: ревью PR ${button.pr} не открылось: ${String(error)}`))
-    else if (e.element === BACK_BUTTON && back) void backToMain($, back).then(async done => {
-      if (!done) return
-      await $.state.set(REVIEWS, { buttons: (await readReviews($)).buttons })
-      await dropFinishedSessions($, await projectRoot($)).catch(error => $.ui.log(`review-kit: фоновые сессии не убраны: ${String(error)}`))
-    })
+    else if (e.element === BACK_BUTTON && back) {
+      const [tree, main] = await Promise.all([projectRoot($), mainRoot($)]).catch(() => [undefined, undefined])
+      void backToMain($, back).then(async done => {
+        if (!done) return
+        await $.state.set(REVIEWS, { buttons: (await readReviews($)).buttons })
+        if (tree) await dropBackgroundTree($, tree).catch(error => $.ui.log(`review-kit: дерево фонового ревью не убрано: ${String(error)}`))
+        if (main) await dropFinishedSessions($, main).catch(error => $.ui.log(`review-kit: фоновые сессии не убраны: ${String(error)}`))
+      })
+    }
     else return next(e)
     return { element: e.element }
   }).catch(($, e, next) => next(e))

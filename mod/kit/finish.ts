@@ -13,17 +13,24 @@ export interface RunReturn {
 }
 
 export async function dropReviewWorktree($: EngineInterface): Promise<string | undefined> {
-  const run = runner($)
-  if (await inMainTree(run)) return undefined
+  if (await inMainTree(runner($))) return undefined
   const here = await projectRoot($)
-  const background = await readMarker($, here)
-  const main = await mainRoot($)
-  const fromMain: Run = (argv, init) => run(argv, { cwd: main, ...init })
-  const result = await removeWorktrees(fromMain, [here], { confirmed: false, isActive: isActive($) })
-  if (result.removed.length && background) return `worktree ${here} удалён — ревью закончено; вернитесь в основную сессию кнопкой «← назад»`
+  if (await readMarker($, here)) return `worktree ${here} уберётся после «← назад» — ревью закончено; вернитесь в основную сессию этой кнопкой`
+  const result = await removeReviewTree($, here)
   if (result.removed.length) return `worktree ${here} удалён — ревью закончено, вкладку можно закрыть; команды в ней больше не работают`
   const reason = result.skipped[0]?.reason
   return reason && reason !== 'не worktree ревью' ? `worktree ${here} оставлен (${reason}) — уберётся при следующем /pr` : undefined
+}
+
+export async function dropBackgroundTree($: EngineInterface, tree: string): Promise<boolean> {
+  return (await removeReviewTree($, tree)).removed.length > 0
+}
+
+async function removeReviewTree($: EngineInterface, path: string): ReturnType<typeof removeWorktrees> {
+  const run = runner($)
+  const main = await mainRoot($)
+  const fromMain: Run = (argv, init) => run(argv, { cwd: main, ...init })
+  return removeWorktrees(fromMain, [path], { confirmed: false, isActive: isActive($) })
 }
 
 export async function restoreTree($: EngineInterface, { headRef, returnTo, stash, stashSha }: RunReturn): Promise<string | undefined> {
